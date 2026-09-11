@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Vadodara 24-Hour AQI Prediction</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+:root {
+  --bg: #12161A;
+  --panel: #1B2126;
+  --panel-border: #2A333A;
+  --text: #E8EDF0;
+  --text-muted: #8A97A0;
+  --table-hover: #151A1E;
+  --button-bg: #242C32;
+  --button-hover: #303A42;
+
+  --good: #4E9F3D;
+  --satisfactory: #A8C43A;
+  --moderate: #E8C547;
+  --poor: #E8823C;
+  --very-poor: #D8453B;
+  --severe: #7A2A2A;
+}
+
+body.light-mode {
+  --bg: #F4F6F8;
+  --panel: #FFFFFF;
+  --panel-border: #D9E0E5;
+  --text: #1D252B;
+  --text-muted: #66727B;
+  --table-hover: #F0F3F5;
+  --button-bg: #E9EEF2;
+  --button-hover: #DCE3E8;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Arial, sans-serif;
+  padding: 24px;
+  min-height: 100vh;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+.page {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* =========================================================
+   HEADER
+========================================================= */
+
+.top-row {
+  position: relative;
+  margin-bottom: 24px;
+}
+
+.page-header {
+  text-align: center;
+}
+
+.page-header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 7px;
+}
+
+.page-header p {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.live-clock {
+  margin-top: 10px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.live-clock .clock-date {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.theme-toggle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  border: 1px solid var(--panel-border);
+  background: var(--button-bg);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.theme-toggle:hover {
+  background: var(--button-hover);
+}
+
+/* =========================================================
+   PANELS
+========================================================= */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 24px;
+  margin-bottom: 18px;
+  transition: background 0.25s ease, border-color 0.25s ease;
+}
+
+.panel-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+
+.panel-subtitle {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 20px;
+}
+
+/* =========================================================
+   FORECAST SUMMARY
+========================================================= */
+
+.forecast-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.summary-card {
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 18px;
+  text-align: center;
+  transition: background 0.25s ease, border-color 0.25s ease;
+}
+
+.summary-hour {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.summary-value {
+  font-size: 34px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.summary-category {
+  display: inline-block;
+  padding: 5px 9px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #FFFFFF;
+}
+
+/* =========================================================
+   CHART
+========================================================= */
+
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: 400px;
+}
+
+.forecast-origin {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: right;
+  margin-top: 10px;
+}
+
+.loading {
+  text-align: center;
+  padding: 40px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* =========================================================
+   TABLE
+========================================================= */
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+td {
+  font-size: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background: var(--table-hover);
+}
+
+.aqi-value {
+  font-weight: 700;
+}
+
+.delta-positive {
+  color: #E8823C;
+  font-weight: 600;
+}
+
+.delta-negative {
+  color: #4E9F3D;
+  font-weight: 600;
+}
+
+/* =========================================================
+   CURRENT CPCB REFERENCE
+========================================================= */
+
+.current-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 25px;
+  align-items: center;
+}
+
+.current-box {
+  text-align: center;
+}
+
+.current-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.current-aqi {
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 9px;
+}
+
+.current-category {
+  display: inline-block;
+  padding: 5px 9px;
+  border-radius: 4px;
+  color: #FFFFFF;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.current-time {
+  margin-top: 11px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.pollutants {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.pollutant {
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  padding: 13px;
+  transition: background 0.25s ease, border-color 0.25s ease;
+}
+
+.pollutant-name {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-bottom: 6px;
+}
+
+.pollutant-value {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* =========================================================
+   ERROR
+========================================================= */
+
+.error {
+  display: none;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 15px;
+  color: #ff6b6b;
+  font-size: 12px;
+  margin-bottom: 18px;
+}
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media (max-width: 850px) {
+
+  .forecast-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .current-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pollutants {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .live-clock {
+  margin-top: 10px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.live-clock .clock-date {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.theme-toggle {
+    position: static;
+    display: block;
+    margin: 14px auto 0;
+  }
+}
+
+@media (max-width: 520px) {
+
+  body {
+    padding: 12px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  .forecast-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .chart-container {
+    height: 300px;
+  }
+
+  .page-header h1 {
+    font-size: 22px;
+  }
+
+  .summary-value {
+    font-size: 27px;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div class="page">
+
+  <div class="top-row">
+
+    <div class="page-header">
+      <h1>Vadodara 24-Hour AQI Prediction</h1>
+      <p>XGBoost Delta Forecasting Model</p>
+      <div id="liveClock" class="live-clock">—</div>
+    </div>
+
+    <button
+      id="themeToggle"
+      class="theme-toggle"
+      type="button"
+      aria-label="Toggle light and dark mode"
+    >
+      ☀️ Light Mode
+    </button>
+
+  </div>
+
+  <!-- ======================================================
+       24-HOUR FORECAST
+  ======================================================= -->
+
+  <div class="panel">
+
+    <div class="panel-title">
+      24-Hour AQI Forecast
+    </div>
+
+    <div class="panel-subtitle">
+      Predicted AQI for the next 1 to 24 hours
+    </div>
+
+    <div
+      id="forecastSummary"
+      class="forecast-summary"
+      style="display:none;"
+    >
+
+      <div class="summary-card">
+        <div class="summary-hour">+1 Hour</div>
+        <div id="aqi1" class="summary-value">—</div>
+        <div id="cat1" class="summary-category">—</div>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-hour">+6 Hours</div>
+        <div id="aqi6" class="summary-value">—</div>
+        <div id="cat6" class="summary-category">—</div>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-hour">+12 Hours</div>
+        <div id="aqi12" class="summary-value">—</div>
+        <div id="cat12" class="summary-category">—</div>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-hour">+24 Hours</div>
+        <div id="aqi24" class="summary-value">—</div>
+        <div id="cat24" class="summary-category">—</div>
+      </div>
+
+    </div>
+
+    <div id="forecastLoading" class="loading">
+      Loading 24-hour AQI prediction...
+    </div>
+
+    <div
+      id="chartWrapper"
+      class="chart-container"
+      style="display:none;"
+    >
+      <canvas id="forecastChart"></canvas>
+    </div>
+
+    <div id="forecastOrigin" class="forecast-origin">
+      —
+    </div>
+
+  </div>
+
+  <!-- ======================================================
+       1 TO 24 HOUR FORECAST TABLE
+  ======================================================= -->
+
+  <div class="panel">
+
+    <div class="panel-title">
+      1–24 Hour Forecast Results
+    </div>
+
+    <div class="panel-subtitle">
+      Hourly AQI predictions from the forecasting model
+    </div>
+
+    <div class="table-wrapper">
+
+      <table>
+
+        <thead>
+          <tr>
+            <th>Horizon</th>
+            <th>Forecast Time</th>
+            <th>Predicted AQI</th>
+            <th>Change</th>
+            <th>Category</th>
+          </tr>
+        </thead>
+
+        <tbody id="forecastTableBody"></tbody>
+
+      </table>
+
+    </div>
+
+  </div>
+
+  <!-- ======================================================
+       CURRENT CPCB REFERENCE
+  ======================================================= -->
+
+  <div class="panel">
+
+    <div class="panel-title">
+      Current CPCB Reference
+    </div>
+
+    <div class="panel-subtitle">
+      Current AQI and pollutant concentrations used as the forecast reference
+    </div>
+
+    <div class="current-grid">
+
+      <div class="current-box">
+
+        <div class="current-label">
+          Current AQI
+        </div>
+
+        <div
+          id="currentAQI"
+          class="current-aqi"
+        >
+          —
+        </div>
+
+        <div
+          id="currentCategory"
+          class="current-category"
+        >
+          —
+        </div>
+
+        <div
+          id="currentTime"
+          class="current-time"
+        >
+          —
+        </div>
+
+      </div>
+
+      <div class="pollutants">
+
+        <div class="pollutant">
+          <div class="pollutant-name">PM2.5</div>
+          <div id="pm25" class="pollutant-value">—</div>
+        </div>
+
+        <div class="pollutant">
+          <div class="pollutant-name">PM10</div>
+          <div id="pm10" class="pollutant-value">—</div>
+        </div>
+
+        <div class="pollutant">
+          <div class="pollutant-name">NO₂</div>
+          <div id="no2" class="pollutant-value">—</div>
+        </div>
+
+        <div class="pollutant">
+          <div class="pollutant-name">O₃</div>
+          <div id="o3" class="pollutant-value">—</div>
+        </div>
+
+        <div class="pollutant">
+          <div class="pollutant-name">NH₃</div>
+          <div id="nh3" class="pollutant-value">—</div>
+        </div>
+
+        <div class="pollutant">
+          <div class="pollutant-name">SO₂</div>
+          <div id="so2" class="pollutant-value">—</div>
+        </div>
+
+        <div class="pollutant">
+          <div class="pollutant-name">CO</div>
+          <div id="co" class="pollutant-value">—</div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <div id="errorBox" class="error"></div>
+
+</div>
+
+<script>
+
+/* ============================================================
+   API CONFIGURATION
+============================================================ */
+
+const API_BASE = "http://localhost:5000";
+
+let forecastChart = null;
+let latestPredictions = [];
+
+/* ============================================================
+   THEME
+============================================================ */
+
+const themeToggle =
+  document.getElementById("themeToggle");
+
+function isLightMode() {
+  return document.body.classList.contains("light-mode");
+}
+
+function updateThemeButton() {
+
+  if (isLightMode()) {
+    themeToggle.textContent = "🌙 Dark Mode";
+  } else {
+    themeToggle.textContent = "☀️ Light Mode";
+  }
+
+}
+
+function applySavedTheme() {
+
+  const savedTheme =
+    localStorage.getItem("aqi-theme");
+
+  if (savedTheme === "light") {
+    document.body.classList.add("light-mode");
+  } else {
+    document.body.classList.remove("light-mode");
+  }
+
+  updateThemeButton();
+
+}
+
+themeToggle.addEventListener(
+  "click",
+  function() {
+
+    document.body.classList.toggle(
+      "light-mode"
+    );
+
+    localStorage.setItem(
+      "aqi-theme",
+      isLightMode()
+        ? "light"
+        : "dark"
+    );
+
+    updateThemeButton();
+
+    if (latestPredictions.length) {
+      drawForecastChart(
+        latestPredictions
+      );
+    }
+
+  }
+);
+
+applySavedTheme();
+
+/* ============================================================
+   LIVE CURRENT TIME
+============================================================ */
+
+function updateLiveClock() {
+  const now = new Date();
+
+  const timeText = now.toLocaleTimeString(
+    undefined,
+    {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }
+  );
+
+  const dateText = now.toLocaleDateString(
+    undefined,
+    {
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric"
+    }
+  );
+
+  document.getElementById("liveClock").innerHTML =
+    timeText +
+    '<span class="clock-date">' +
+    dateText +
+    '</span>';
+}
+
+updateLiveClock();
+setInterval(updateLiveClock, 1000);
+
+/* ============================================================
+   AQI CATEGORY
+============================================================ */
+
+function getCategory(aqi) {
+
+  if (
+    aqi === null ||
+    aqi === undefined ||
+    isNaN(aqi)
+  ) {
+    return "Unavailable";
+  }
+
+  aqi = Number(aqi);
+
+  if (aqi <= 50) return "Good";
+  if (aqi <= 100) return "Satisfactory";
+  if (aqi <= 200) return "Moderate";
+  if (aqi <= 300) return "Poor";
+  if (aqi <= 400) return "Very Poor";
+
+  return "Severe";
+}
+
+/* ============================================================
+   AQI COLOR
+============================================================ */
+
+function getColor(aqi) {
+
+  if (
+    aqi === null ||
+    aqi === undefined ||
+    isNaN(aqi)
+  ) {
+    return "#8A97A0";
+  }
+
+  aqi = Number(aqi);
+
+  if (aqi <= 50) return "#4E9F3D";
+  if (aqi <= 100) return "#A8C43A";
+  if (aqi <= 200) return "#E8C547";
+  if (aqi <= 300) return "#E8823C";
+  if (aqi <= 400) return "#D8453B";
+
+  return "#7A2A2A";
+}
+
+/* ============================================================
+   FORMAT TIMESTAMP
+============================================================ */
+
+function formatTime(timestamp) {
+
+  if (!timestamp) {
+    return "—";
+  }
+
+  const date =
+    new Date(
+      timestamp.replace(
+        " ",
+        "T"
+      )
+    );
+
+  if (
+    isNaN(
+      date.getTime()
+    )
+  ) {
+    return timestamp;
+  }
+
+  return date.toLocaleString(
+    undefined,
+    {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    }
+  );
+}
+
+/* ============================================================
+   FORECAST SUMMARY CARD
+============================================================ */
+
+function setSummaryCard(
+  horizon,
+  prediction
+) {
+
+  const valueElement =
+    document.getElementById(
+      "aqi" + horizon
+    );
+
+  const categoryElement =
+    document.getElementById(
+      "cat" + horizon
+    );
+
+  if (
+    !prediction ||
+    !valueElement ||
+    !categoryElement
+  ) {
+    return;
+  }
+
+  const aqi =
+    Number(
+      prediction.predicted_aqi
+    );
+
+  if (isNaN(aqi)) {
+
+    valueElement.textContent =
+      "—";
+
+    categoryElement.textContent =
+      "Unavailable";
+
+    categoryElement.style.background =
+      "#8A97A0";
+
+    return;
+  }
+
+  const color =
+    getColor(aqi);
+
+  valueElement.textContent =
+    aqi.toFixed(1);
+
+  valueElement.style.color =
+    color;
+
+  categoryElement.textContent =
+    getCategory(aqi);
+
+  categoryElement.style.background =
+    color;
+}
+
+/* ============================================================
+   FORECAST SUMMARY
+============================================================ */
+
+function displayForecastSummary(
+  predictions
+) {
+
+  function findPrediction(
+    horizon
+  ) {
+
+    return predictions.find(
+      item =>
+        Number(
+          item.horizon_hours
+        ) === horizon
+    );
+  }
+
+  setSummaryCard(
+    1,
+    findPrediction(1)
+  );
+
+  setSummaryCard(
+    6,
+    findPrediction(6)
+  );
+
+  setSummaryCard(
+    12,
+    findPrediction(12)
+  );
+
+  setSummaryCard(
+    24,
+    findPrediction(24)
+  );
+
+  document.getElementById(
+    "forecastSummary"
+  ).style.display =
+    "grid";
+}
+
+/* ============================================================
+   FORECAST CHART
+============================================================ */
+
+function drawForecastChart(
+  predictions
+) {
+
+  if (forecastChart) {
+
+    forecastChart.destroy();
+
+    forecastChart =
+      null;
+  }
+
+  latestPredictions =
+    predictions;
+
+  const canvas =
+    document.getElementById(
+      "forecastChart"
+    );
+
+  const labels =
+    predictions.map(
+      prediction =>
+        "+"
+        + prediction.horizon_hours
+        + "h"
+    );
+
+  const values =
+    predictions.map(
+      prediction =>
+        Number(
+          prediction.predicted_aqi
+        )
+    );
+
+  const pointColors =
+    values.map(
+      value =>
+        getColor(value)
+    );
+
+  const textColor =
+    isLightMode()
+      ? "#66727B"
+      : "#8A97A0";
+
+  const legendColor =
+    isLightMode()
+      ? "#1D252B"
+      : "#E8EDF0";
+
+  const gridColor =
+    isLightMode()
+      ? "#D9E0E5"
+      : "#2A333A";
+
+  forecastChart =
+    new Chart(
+      canvas,
+      {
+
+        type: "line",
+
+        data: {
+
+          labels:
+            labels,
+
+          datasets: [
+
+            {
+
+              label:
+                "Predicted AQI",
+
+              data:
+                values,
+
+              borderColor:
+                "#E8C547",
+
+              backgroundColor:
+                "rgba(232,197,71,0.12)",
+
+              borderWidth:
+                3,
+
+              pointRadius:
+                4,
+
+              pointHoverRadius:
+                6,
+
+              pointBackgroundColor:
+                pointColors,
+
+              pointBorderColor:
+                pointColors,
+
+              tension:
+                0.25,
+
+              fill:
+                true
+
+            }
+
+          ]
+
+        },
+
+        options: {
+
+          responsive:
+            true,
+
+          maintainAspectRatio:
+            false,
+
+          interaction: {
+
+            intersect:
+              false,
+
+            mode:
+              "index"
+
+          },
+
+          plugins: {
+
+            legend: {
+
+              display:
+                true,
+
+              labels: {
+
+                color:
+                  legendColor
+
+              }
+
+            },
+
+            tooltip: {
+
+              callbacks: {
+
+                title:
+                  function(context) {
+
+                    const index =
+                      context[0]
+                        .dataIndex;
+
+                    return formatTime(
+                      predictions[index]
+                        .forecast_timestamp
+                    );
+
+                  },
+
+                afterBody:
+                  function(context) {
+
+                    const index =
+                      context[0]
+                        .dataIndex;
+
+                    const prediction =
+                      predictions[index];
+
+                    const delta =
+                      Number(
+                        prediction.predicted_delta
+                      );
+
+                    return [
+
+                      "Category: "
+                      + getCategory(
+                          prediction.predicted_aqi
+                        ),
+
+                      "Change: "
+                      + (
+                          delta >= 0
+                            ? "+"
+                            : ""
+                        )
+                      + delta.toFixed(2)
+
+                    ];
+
+                  }
+
+              }
+
+            }
+
+          },
+
+          scales: {
+
+            x: {
+
+              ticks: {
+
+                color:
+                  textColor,
+
+                maxTicksLimit:
+                  12
+
+              },
+
+              grid: {
+
+                color:
+                  gridColor
+
+              }
+
+            },
+
+            y: {
+
+              beginAtZero:
+                false,
+
+              title: {
+
+                display:
+                  true,
+
+                text:
+                  "AQI",
+
+                color:
+                  textColor
+
+              },
+
+              ticks: {
+
+                color:
+                  textColor
+
+              },
+
+              grid: {
+
+                color:
+                  gridColor
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+    );
+}
+
+/* ============================================================
+   FORECAST TABLE
+============================================================ */
+
+function displayForecastTable(
+  predictions
+) {
+
+  const tbody =
+    document.getElementById(
+      "forecastTableBody"
+    );
+
+  tbody.innerHTML =
+    "";
+
+  predictions.forEach(
+    prediction => {
+
+      const row =
+        document.createElement(
+          "tr"
+        );
+
+      const aqi =
+        Number(
+          prediction.predicted_aqi
+        );
+
+      const delta =
+        Number(
+          prediction.predicted_delta
+        );
+
+      let deltaClass =
+        "";
+
+      if (delta > 0) {
+        deltaClass =
+          "delta-positive";
+      }
+
+      if (delta < 0) {
+        deltaClass =
+          "delta-negative";
+      }
+
+      const deltaText =
+        isNaN(delta)
+          ? "—"
+          :
+            (
+              delta >= 0
+                ? "+"
+                : ""
+            )
+            + delta.toFixed(2);
+
+      row.innerHTML = `
+
+        <td>
+          +${prediction.horizon_hours}h
+        </td>
+
+        <td>
+          ${formatTime(
+            prediction.forecast_timestamp
+          )}
+        </td>
+
+        <td
+          class="aqi-value"
+          style="
+            color:${getColor(aqi)};
+          "
+        >
+          ${
+            isNaN(aqi)
+              ? "—"
+              : aqi.toFixed(1)
+          }
+        </td>
+
+        <td
+          class="${deltaClass}"
+        >
+          ${deltaText}
+        </td>
+
+        <td>
+          ${getCategory(aqi)}
+        </td>
+
+      `;
+
+      tbody.appendChild(
+        row
+      );
+
+    }
+  );
+}
+
+/* ============================================================
+   CURRENT CPCB REFERENCE
+============================================================ */
+
+function displayCurrent(
+  data
+) {
+
+  if (!data) {
+    return;
+  }
+
+  const aqi =
+    Number(
+      data.aqi
+    );
+
+  const currentAQI =
+    document.getElementById(
+      "currentAQI"
+    );
+
+  const currentCategory =
+    document.getElementById(
+      "currentCategory"
+    );
+
+  if (!isNaN(aqi)) {
+
+    currentAQI.textContent =
+      aqi.toFixed(1);
+
+    currentAQI.style.color =
+      getColor(aqi);
+
+    currentCategory.textContent =
+      getCategory(aqi);
+
+    currentCategory.style.background =
+      getColor(aqi);
+
+  } else {
+
+    currentAQI.textContent =
+      "—";
+
+    currentCategory.textContent =
+      "Unavailable";
+
+    currentCategory.style.background =
+      "#8A97A0";
+  }
+
+  document.getElementById(
+    "currentTime"
+  ).textContent =
+    data.timestamp
+      ? formatTime(
+          data.timestamp
+        )
+      : "—";
+
+  const units = {
+
+    pm25:
+      "µg/m³",
+
+    pm10:
+      "µg/m³",
+
+    no2:
+      "µg/m³",
+
+    o3:
+      "µg/m³",
+
+    nh3:
+      "µg/m³",
+
+    so2:
+      "µg/m³",
+
+    co:
+      "mg/m³"
+
+  };
+
+  Object.keys(
+    units
+  ).forEach(
+    pollutant => {
+
+      const element =
+        document.getElementById(
+          pollutant
+        );
+
+      const value =
+        data[pollutant];
+
+      if (
+        value === null ||
+        value === undefined ||
+        isNaN(value)
+      ) {
+
+        element.textContent =
+          "—";
+
+        return;
+      }
+
+      const decimalPlaces =
+        pollutant === "co"
+          ? 3
+          : 1;
+
+      element.textContent =
+        Number(value)
+          .toFixed(
+            decimalPlaces
+          )
+        + " "
+        + units[pollutant];
+
+    }
+  );
+}
+
+/* ============================================================
+   LOAD API DATA
+============================================================ */
+
+async function loadForecast() {
+
+  const loading =
+    document.getElementById(
+      "forecastLoading"
+    );
+
+  const chartWrapper =
+    document.getElementById(
+      "chartWrapper"
+    );
+
+  const errorBox =
+    document.getElementById(
+      "errorBox"
+    );
+
+  errorBox.style.display =
+    "none";
+
+  try {
+
+    const response =
+      await fetch(
+        `${API_BASE}/api/forecast?t=${Date.now()}`,
+        {
+          cache:
+            "no-store"
+        }
+      );
+
+    if (!response.ok) {
+
+      throw new Error(
+        "API returned HTTP "
+        + response.status
+      );
+    }
+
+    const data =
+      await response.json();
+
+    if (!data.success) {
+
+      throw new Error(
+        data.message
+        ||
+        "Forecast API failed."
+      );
+    }
+
+    const predictions =
+      data.forecast || [];
+
+    if (!predictions.length) {
+
+      throw new Error(
+        "No forecast data available."
+      );
+    }
+
+    displayForecastSummary(
+      predictions
+    );
+
+    displayForecastTable(
+      predictions
+    );
+
+    drawForecastChart(
+      predictions
+    );
+
+    loading.style.display =
+      "none";
+
+    chartWrapper.style.display =
+      "block";
+
+    const origin =
+      data.forecast_origin
+      ||
+      predictions[0]
+        .forecast_origin;
+
+    document.getElementById(
+      "forecastOrigin"
+    ).textContent =
+      "Forecast origin: "
+      + formatTime(
+          origin
+        );
+
+    displayCurrent(
+      data.current
+    );
+
+  } catch (error) {
+
+    console.error(
+      "Forecast API error:",
+      error
+    );
+
+    loading.textContent =
+      "Unable to load prediction.";
+
+    chartWrapper.style.display =
+      "none";
+
+    errorBox.style.display =
+      "block";
+
+    errorBox.textContent =
+      "Unable to connect to "
+      + API_BASE
+      + "/api/forecast. "
+      + error.message;
+  }
+}
+
+/* ============================================================
+   INITIAL LOAD
+============================================================ */
+
+loadForecast();
+
+/* ============================================================
+   AUTO REFRESH EVERY 60 SECONDS
+============================================================ */
+
+setInterval(
+  loadForecast,
+  60 * 1000
+);
+
+</script>
+
+</body>
+</html>
