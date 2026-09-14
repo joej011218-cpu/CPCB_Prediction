@@ -17,6 +17,10 @@ from database import (
 )
 
 
+# ============================================================
+# PATHS
+# ============================================================
+
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
@@ -42,6 +46,11 @@ PREDICTOR_PATH = os.path.join(
     "predictor.py"
 )
 
+
+# ============================================================
+# CPCB API
+# ============================================================
+
 API_URL = (
     "https://api.data.gov.in/resource/"
     "3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69"
@@ -51,6 +60,7 @@ API_KEY = os.getenv(
     "CPCB_API_KEY",
     ""
 )
+
 CHECK_INTERVAL = 60
 API_TIMEOUT = 45
 MAX_RETRIES = 3
@@ -67,6 +77,10 @@ def get_api_params():
         "filters[city]": "Vadodara",
     }
 
+
+# ============================================================
+# POLLUTANTS
+# ============================================================
 
 POLLUTANTS = [
     "pm25",
@@ -96,6 +110,10 @@ POLLUTANT_NAME_MAP = {
 }
 
 
+# ============================================================
+# DATABASE INITIALIZATION
+# ============================================================
+
 def initialize_database():
     print()
     print("=" * 70)
@@ -112,6 +130,7 @@ def initialize_database():
 
     try:
         cursor = conn.cursor()
+
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS cpcb_hourly (
@@ -127,16 +146,23 @@ def initialize_database():
             )
             """
         )
+
         conn.commit()
+
     finally:
         conn.close()
 
     if using_postgres():
         print("Database ready: PostgreSQL")
+
     else:
         print("Database ready:")
         print(DATABASE_PATH)
 
+
+# ============================================================
+# CPCB API FETCH
+# ============================================================
 
 def fetch_cpcb_data():
     print()
@@ -146,10 +172,14 @@ def fetch_cpcb_data():
 
     if not API_KEY:
         print()
-        print("ERROR: CPCB_API_KEY environment variable is not configured.")
+        print(
+            "ERROR: CPCB_API_KEY environment variable "
+            "is not configured."
+        )
         return None
 
     session = requests.Session()
+
     session.headers.update(
         {
             "User-Agent": (
@@ -165,10 +195,16 @@ def fetch_cpcb_data():
 
     api_params = get_api_params()
 
-    for attempt in range(1, MAX_RETRIES + 1):
+    for attempt in range(
+        1,
+        MAX_RETRIES + 1
+    ):
         try:
             print()
-            print(f"API attempt {attempt}/{MAX_RETRIES}")
+            print(
+                f"API attempt "
+                f"{attempt}/{MAX_RETRIES}"
+            )
 
             response = session.get(
                 API_URL,
@@ -176,16 +212,30 @@ def fetch_cpcb_data():
                 timeout=API_TIMEOUT,
             )
 
-            print("HTTP Status:", response.status_code)
+            print(
+                "HTTP Status:",
+                response.status_code
+            )
+
+            # ------------------------------------------------
+            # SUCCESS
+            # ------------------------------------------------
 
             if response.status_code == 200:
+
                 try:
                     result = response.json()
+
                 except ValueError:
-                    print("ERROR: CPCB returned invalid JSON.")
+                    print(
+                        "ERROR: CPCB returned invalid JSON."
+                    )
                     return None
 
-                records = result.get("records", [])
+                records = result.get(
+                    "records",
+                    []
+                )
 
                 print()
                 print("=" * 70)
@@ -193,89 +243,204 @@ def fetch_cpcb_data():
                 print("=" * 70)
 
                 for record in records:
-                    if str(record.get("pollutant_id", "")).upper() == "CO":
+
+                    if (
+                        str(
+                            record.get(
+                                "pollutant_id",
+                                ""
+                            )
+                        ).upper()
+                        == "CO"
+                    ):
                         print(record)
 
                 if not records:
-                    print("CPCB API returned zero records.")
+                    print(
+                        "CPCB API returned zero records."
+                    )
                     return None
 
-                print("Records received:", len(records))
+                print(
+                    "Records received:",
+                    len(records)
+                )
+
                 return records
 
-            if response.status_code in (500, 502, 503, 504):
+            # ------------------------------------------------
+            # TEMPORARY SERVER ERRORS
+            # ------------------------------------------------
+
+            if response.status_code in (
+                500,
+                502,
+                503,
+                504,
+            ):
                 print()
-                print("CPCB API HTTP error:")
-                print(f"{response.status_code} Server Error")
+                print(
+                    "CPCB API HTTP error:"
+                )
+
+                print(
+                    f"{response.status_code} "
+                    "Server Error"
+                )
 
                 if attempt < MAX_RETRIES:
-                    print(f"Retrying in {RETRY_DELAY} seconds...")
-                    time.sleep(RETRY_DELAY)
+                    print(
+                        f"Retrying in "
+                        f"{RETRY_DELAY} seconds..."
+                    )
+
+                    time.sleep(
+                        RETRY_DELAY
+                    )
+
                     continue
 
                 print()
                 print("=" * 70)
                 print("CPCB API FAILED")
                 print("=" * 70)
-                print(f"All {MAX_RETRIES} API attempts failed.")
+
+                print(
+                    f"All {MAX_RETRIES} "
+                    "API attempts failed."
+                )
+
                 return None
 
+            # ------------------------------------------------
+            # OTHER HTTP ERROR
+            # ------------------------------------------------
+
             print()
-            print("CPCB API HTTP error:")
-            print(response.text[:500])
+            print(
+                "CPCB API HTTP error:"
+            )
+
+            print(
+                response.text[:500]
+            )
+
             return None
 
+        # ----------------------------------------------------
+        # TIMEOUT
+        # ----------------------------------------------------
+
         except requests.exceptions.Timeout:
+
             print()
-            print("CPCB API request timed out.")
+            print(
+                "CPCB API request timed out."
+            )
 
             if attempt < MAX_RETRIES:
-                print(f"Retrying in {RETRY_DELAY} seconds...")
-                time.sleep(RETRY_DELAY)
+
+                print(
+                    f"Retrying in "
+                    f"{RETRY_DELAY} seconds..."
+                )
+
+                time.sleep(
+                    RETRY_DELAY
+                )
+
                 continue
 
             print()
             print("=" * 70)
             print("CPCB API FAILED")
             print("=" * 70)
+
             return None
 
+        # ----------------------------------------------------
+        # CONNECTION ERROR
+        # ----------------------------------------------------
+
         except requests.exceptions.ConnectionError as e:
+
             print()
-            print("CPCB connection error:")
+            print(
+                "CPCB connection error:"
+            )
+
             print(e)
 
             if attempt < MAX_RETRIES:
-                print(f"Retrying in {RETRY_DELAY} seconds...")
-                time.sleep(RETRY_DELAY)
+
+                print(
+                    f"Retrying in "
+                    f"{RETRY_DELAY} seconds..."
+                )
+
+                time.sleep(
+                    RETRY_DELAY
+                )
+
                 continue
 
             return None
 
+        # ----------------------------------------------------
+        # REQUEST ERROR
+        # ----------------------------------------------------
+
         except requests.exceptions.RequestException as e:
+
             print()
-            print("CPCB request failed:")
+            print(
+                "CPCB request failed:"
+            )
+
             print(e)
+
             return None
 
+        # ----------------------------------------------------
+        # UNEXPECTED ERROR
+        # ----------------------------------------------------
+
         except Exception as e:
+
             print()
-            print("Unexpected API error:")
+            print(
+                "Unexpected API error:"
+            )
+
             print(e)
+
             return None
 
     return None
 
 
+# ============================================================
+# DATA CLEANING
+# ============================================================
+
 def normalize_pollutant_name(value):
+
     if pd.isna(value):
         return None
 
-    value = str(value).strip().upper()
-    return POLLUTANT_NAME_MAP.get(value)
+    value = (
+        str(value)
+        .strip()
+        .upper()
+    )
+
+    return POLLUTANT_NAME_MAP.get(
+        value
+    )
 
 
 def find_value_column(df):
+
     possible_columns = [
         "avg_value",
         "pollutant_avg",
@@ -285,6 +450,7 @@ def find_value_column(df):
     ]
 
     for column in possible_columns:
+
         if column in df.columns:
             return column
 
@@ -292,59 +458,137 @@ def find_value_column(df):
 
 
 def to_database_value(value):
+
     if pd.isna(value):
         return None
+
     return float(value)
 
 
+# ============================================================
+# CPCB RECORDS -> HOURLY TABLE
+# ============================================================
+
 def convert_records_to_hourly(records):
+
     if not records:
         return None
 
-    df = pd.DataFrame(records)
+    df = pd.DataFrame(
+        records
+    )
 
     if df.empty:
         return None
 
     print()
-    print("CPCB columns received:")
-    print(df.columns.tolist())
+    print(
+        "CPCB columns received:"
+    )
+
+    print(
+        df.columns.tolist()
+    )
+
+    # --------------------------------------------------------
+    # TIMESTAMP COLUMN
+    # --------------------------------------------------------
 
     timestamp_column = None
-    for column in ["last_update", "timestamp", "datetime", "date", "time"]:
+
+    for column in [
+        "last_update",
+        "timestamp",
+        "datetime",
+        "date",
+        "time",
+    ]:
+
         if column in df.columns:
             timestamp_column = column
             break
 
     if timestamp_column is None:
+
         print()
-        print("ERROR: No CPCB timestamp column found.")
+        print(
+            "ERROR: No CPCB timestamp "
+            "column found."
+        )
+
         return None
 
+    # --------------------------------------------------------
+    # POLLUTANT COLUMN
+    # --------------------------------------------------------
+
     pollutant_column = None
-    for column in ["pollutant_id", "pollutant", "pollutant_name"]:
+
+    for column in [
+        "pollutant_id",
+        "pollutant",
+        "pollutant_name",
+    ]:
+
         if column in df.columns:
             pollutant_column = column
             break
 
     if pollutant_column is None:
+
         print()
-        print("ERROR: No pollutant_id column found.")
+        print(
+            "ERROR: No pollutant_id "
+            "column found."
+        )
+
         return None
 
-    value_column = find_value_column(df)
+    # --------------------------------------------------------
+    # VALUE COLUMN
+    # --------------------------------------------------------
+
+    value_column = find_value_column(
+        df
+    )
 
     if value_column is None:
+
         print()
-        print("ERROR: No pollutant value column found.")
-        print("Available columns:")
-        print(df.columns.tolist())
+        print(
+            "ERROR: No pollutant value "
+            "column found."
+        )
+
+        print(
+            "Available columns:"
+        )
+
+        print(
+            df.columns.tolist()
+        )
+
         return None
 
     print()
-    print("Timestamp column:", timestamp_column)
-    print("Pollutant column:", pollutant_column)
-    print("Value column:", value_column)
+    print(
+        "Timestamp column:",
+        timestamp_column
+    )
+
+    print(
+        "Pollutant column:",
+        pollutant_column
+    )
+
+    print(
+        "Value column:",
+        value_column
+    )
+
+    # --------------------------------------------------------
+    # CLEAN DATA
+    # --------------------------------------------------------
 
     data = df.copy()
 
@@ -354,10 +598,15 @@ def convert_records_to_hourly(records):
         dayfirst=True,
     )
 
-    data = data.dropna(subset=["timestamp"])
+    data = data.dropna(
+        subset=["timestamp"]
+    )
 
-    data["pollutant"] = data[pollutant_column].apply(
-        normalize_pollutant_name
+    data["pollutant"] = (
+        data[pollutant_column]
+        .apply(
+            normalize_pollutant_name
+        )
     )
 
     data["value"] = pd.to_numeric(
@@ -365,24 +614,55 @@ def convert_records_to_hourly(records):
         errors="coerce",
     ).astype(float)
 
-    co_mask = data["pollutant"] == "co"
-    data.loc[co_mask, "value"] = data.loc[co_mask, "value"] / 1000.0
+    # --------------------------------------------------------
+    # CPCB CO:
+    # API value µg/m3 -> model/database mg/m3
+    # --------------------------------------------------------
+
+    co_mask = (
+        data["pollutant"] == "co"
+    )
+
+    data.loc[
+        co_mask,
+        "value"
+    ] = (
+        data.loc[
+            co_mask,
+            "value"
+        ]
+        / 1000.0
+    )
 
     if data.empty:
+
         print()
-        print("ERROR: No valid pollutant records after cleaning.")
+        print(
+            "ERROR: No valid pollutant "
+            "records after cleaning."
+        )
+
         return None
 
     print()
-    print("Pollutants received:")
+    print(
+        "Pollutants received:"
+    )
+
     print(
         sorted(
-            data["pollutant"]
+            data[
+                "pollutant"
+            ]
             .dropna()
             .unique()
             .tolist()
         )
     )
+
+    # --------------------------------------------------------
+    # PIVOT POLLUTANTS
+    # --------------------------------------------------------
 
     hourly = (
         data
@@ -397,7 +677,12 @@ def convert_records_to_hourly(records):
 
     hourly.columns.name = None
 
+    # --------------------------------------------------------
+    # ENSURE ALL POLLUTANT COLUMNS EXIST
+    # --------------------------------------------------------
+
     for pollutant in POLLUTANTS:
+
         if pollutant not in hourly.columns:
             hourly[pollutant] = None
 
@@ -415,28 +700,48 @@ def convert_records_to_hourly(records):
         ]
     ].copy()
 
-    hourly = hourly.sort_values("timestamp").reset_index(drop=True)
+    hourly = (
+        hourly
+        .sort_values(
+            "timestamp"
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+
     return hourly
 
 
+# ============================================================
+# GET LATEST DATABASE TIMESTAMP
+# ============================================================
+
 def get_latest_database_timestamp():
+
     if not database_available():
         return None
 
     try:
+
         df = read_dataframe(
             """
             SELECT MAX(timestamp) AS timestamp
             FROM cpcb_hourly
             """
         )
+
     except Exception:
         return None
 
     if df.empty:
         return None
 
-    value = df.iloc[0]["timestamp"]
+    value = (
+        df.iloc[0][
+            "timestamp"
+        ]
+    )
 
     if pd.isna(value):
         return None
@@ -452,15 +757,29 @@ def get_latest_database_timestamp():
     return timestamp
 
 
+# ============================================================
+# SAVE CPCB DATA
+# ============================================================
+
 def save_hourly_data(df):
-    if df is None or df.empty:
+
+    if (
+        df is None
+        or df.empty
+    ):
         return 0
 
     conn = get_connection()
+
     affected = 0
 
-    placeholder = sql_placeholder()
-    placeholders = ", ".join([placeholder] * 9)
+    placeholder = (
+        sql_placeholder()
+    )
+
+    placeholders = ", ".join(
+        [placeholder] * 9
+    )
 
     query = f"""
         INSERT INTO cpcb_hourly
@@ -491,206 +810,509 @@ def save_hourly_data(df):
     """
 
     try:
+
         cursor = conn.cursor()
 
         for _, row in df.iterrows():
-            timestamp = row["timestamp"]
+
+            timestamp = (
+                row["timestamp"]
+            )
 
             if pd.isna(timestamp):
                 continue
 
-            timestamp_string = pd.Timestamp(timestamp).strftime(
-                "%Y-%m-%d %H:%M:%S"
+            timestamp_string = (
+                pd.Timestamp(
+                    timestamp
+                )
+                .strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
             )
 
             values = (
                 timestamp_string,
-                to_database_value(row["pm25"]),
-                to_database_value(row["pm10"]),
-                to_database_value(row["no"]),
-                to_database_value(row["no2"]),
-                to_database_value(row["nh3"]),
-                to_database_value(row["so2"]),
-                to_database_value(row["co"]),
-                to_database_value(row["o3"]),
+                to_database_value(
+                    row["pm25"]
+                ),
+                to_database_value(
+                    row["pm10"]
+                ),
+                to_database_value(
+                    row["no"]
+                ),
+                to_database_value(
+                    row["no2"]
+                ),
+                to_database_value(
+                    row["nh3"]
+                ),
+                to_database_value(
+                    row["so2"]
+                ),
+                to_database_value(
+                    row["co"]
+                ),
+                to_database_value(
+                    row["o3"]
+                ),
             )
 
-            cursor.execute(query, values)
+            cursor.execute(
+                query,
+                values
+            )
+
             affected += 1
 
         conn.commit()
 
     except Exception:
+
         conn.rollback()
         raise
 
     finally:
+
         conn.close()
 
     return affected
 
 
-def collect_new_data():
-    previous_latest_timestamp = get_latest_database_timestamp()
+# ============================================================
+# COLLECT NEW CPCB DATA
+# ============================================================
 
-    records = fetch_cpcb_data()
+def collect_new_data():
+
+    previous_latest_timestamp = (
+        get_latest_database_timestamp()
+    )
+
+    records = (
+        fetch_cpcb_data()
+    )
 
     if records is None:
+
         print()
-        print("No data received from CPCB.")
+        print(
+            "No data received from CPCB."
+        )
+
         return False
 
-    hourly = convert_records_to_hourly(records)
+    hourly = (
+        convert_records_to_hourly(
+            records
+        )
+    )
 
     if hourly is None:
+
         print()
-        print("CPCB data could not be converted.")
+        print(
+            "CPCB data could not "
+            "be converted."
+        )
+
         return False
 
     if hourly.empty:
+
         print()
-        print("No hourly records available.")
+        print(
+            "No hourly records available."
+        )
+
         return False
 
     latest = hourly.iloc[-1]
-    latest_api_timestamp = pd.Timestamp(latest["timestamp"])
+
+    latest_api_timestamp = (
+        pd.Timestamp(
+            latest["timestamp"]
+        )
+    )
 
     print()
     print("=" * 70)
-    print("LATEST CPCB HOURLY RECORD")
+    print(
+        "LATEST CPCB HOURLY RECORD"
+    )
     print("=" * 70)
-    print("Timestamp:", latest_api_timestamp)
+
+    print(
+        "Timestamp:",
+        latest_api_timestamp
+    )
 
     for pollutant in POLLUTANTS:
-        print(f"{pollutant.upper():5s}:", latest[pollutant])
 
-    affected = save_hourly_data(hourly)
+        print(
+            f"{pollutant.upper():5s}:",
+            latest[pollutant]
+        )
+
+    affected = (
+        save_hourly_data(
+            hourly
+        )
+    )
 
     print()
-    print("Hourly records processed:", affected)
+    print(
+        "Hourly records processed:",
+        affected
+    )
+
+    # --------------------------------------------------------
+    # EMPTY DATABASE
+    # --------------------------------------------------------
 
     if previous_latest_timestamp is None:
+
         print()
-        print("Database previously had no CPCB timestamp.")
+        print(
+            "Database previously had "
+            "no CPCB timestamp."
+        )
+
         return True
 
-    previous_latest_timestamp = pd.Timestamp(previous_latest_timestamp)
+    previous_latest_timestamp = (
+        pd.Timestamp(
+            previous_latest_timestamp
+        )
+    )
 
-    if latest_api_timestamp > previous_latest_timestamp:
+    # --------------------------------------------------------
+    # NEW CPCB HOUR
+    # --------------------------------------------------------
+
+    if (
+        latest_api_timestamp
+        >
+        previous_latest_timestamp
+    ):
+
         print()
-        print("New CPCB timestamp detected:")
-        print(previous_latest_timestamp, "->", latest_api_timestamp)
+        print(
+            "New CPCB timestamp detected:"
+        )
+
+        print(
+            previous_latest_timestamp,
+            "->",
+            latest_api_timestamp
+        )
+
         return True
+
+    # --------------------------------------------------------
+    # SAME CPCB HOUR
+    # --------------------------------------------------------
 
     print()
-    print("Latest CPCB timestamp is unchanged.")
+    print(
+        "Latest CPCB timestamp "
+        "is unchanged."
+    )
+
     return False
 
 
+# ============================================================
+# RUN PREDICTOR
+# ============================================================
+
 def regenerate_prediction():
+
     print()
     print("=" * 70)
-    print("REGENERATING VADODARA PREDICTION")
+    print(
+        "REGENERATING VADODARA PREDICTION"
+    )
     print("=" * 70)
 
-    if not os.path.exists(PREDICTOR_PATH):
+    if not os.path.exists(
+        PREDICTOR_PATH
+    ):
+
         print()
-        print("ERROR: predictor.py not found:")
-        print(PREDICTOR_PATH)
+        print(
+            "ERROR: predictor.py not found:"
+        )
+
+        print(
+            PREDICTOR_PATH
+        )
+
         return False
 
     try:
+
         result = subprocess.run(
-            [sys.executable, PREDICTOR_PATH],
+            [
+                sys.executable,
+                PREDICTOR_PATH,
+            ],
             cwd=BASE_DIR,
             check=False,
         )
 
         if result.returncode == 0:
+
             print()
-            print("Prediction regenerated successfully.")
+            print(
+                "Prediction regenerated "
+                "successfully."
+            )
+
             return True
 
         print()
-        print("Prediction failed.")
-        print("Exit code:", result.returncode)
+        print(
+            "Prediction failed."
+        )
+
+        print(
+            "Exit code:",
+            result.returncode
+        )
+
         return False
 
     except Exception as e:
+
         print()
-        print("Prediction regeneration error:")
+        print(
+            "Prediction regeneration error:"
+        )
+
         print(e)
+
         return False
 
 
-def main():
+# ============================================================
+# ONE COLLECTION CYCLE
+# ============================================================
+
+def run_collection_cycle():
+
     print()
     print("=" * 70)
-    print("VADODARA CPCB LIVE COLLECTOR")
+    print(
+        "CPCB COLLECTION CYCLE"
+    )
+    print("=" * 70)
+
+    new_data = (
+        collect_new_data()
+    )
+
+    if new_data:
+
+        print()
+        print(
+            "New CPCB hour available."
+        )
+
+        prediction_success = (
+            regenerate_prediction()
+        )
+
+        if prediction_success:
+
+            print()
+            print(
+                "Live prediction updated."
+            )
+
+        else:
+
+            print()
+            print(
+                "Prediction could not "
+                "be regenerated."
+            )
+
+    else:
+
+        print()
+        print(
+            "No new CPCB hour available."
+        )
+
+        print(
+            "Existing prediction retained."
+        )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print()
+    print("=" * 70)
+    print(
+        "VADODARA CPCB LIVE COLLECTOR"
+    )
     print("=" * 70)
     print()
 
     if using_postgres():
-        print("Database: PostgreSQL")
-    else:
-        print("Database:", DATABASE_PATH)
 
-    print("Predictor:", PREDICTOR_PATH)
-    print("Check interval:", CHECK_INTERVAL, "seconds")
+        print(
+            "Database: PostgreSQL"
+        )
+
+    else:
+
+        print(
+            "Database:",
+            DATABASE_PATH
+        )
+
+    print(
+        "Predictor:",
+        PREDICTOR_PATH
+    )
+
+    # --------------------------------------------------------
+    # CHECK FOR CLOUD ONE-TIME MODE
+    # --------------------------------------------------------
+
+    run_once = (
+        "--once" in sys.argv
+    )
+
+    if run_once:
+
+        print(
+            "Mode: ONE-TIME CLOUD UPDATE"
+        )
+
+    else:
+
+        print(
+            "Mode: CONTINUOUS LOCAL COLLECTOR"
+        )
+
+        print(
+            "Check interval:",
+            CHECK_INTERVAL,
+            "seconds"
+        )
+
+    # --------------------------------------------------------
+    # INITIALIZE DATABASE
+    # --------------------------------------------------------
 
     initialize_database()
 
-    while True:
+    # ========================================================
+    # CLOUD / GITHUB ACTIONS MODE
+    # ========================================================
+
+    if run_once:
+
         try:
-            print()
-            print("=" * 70)
-            print("CPCB COLLECTION CYCLE")
-            print("=" * 70)
 
-            new_data = collect_new_data()
-
-            if new_data:
-                print()
-                print("New CPCB hour available.")
-
-                prediction_success = regenerate_prediction()
-
-                if prediction_success:
-                    print()
-                    print("Live prediction updated.")
-                else:
-                    print()
-                    print("Prediction could not be regenerated.")
-            else:
-                print()
-                print("No new CPCB hour available.")
-                print("Existing prediction retained.")
+            run_collection_cycle()
 
             print()
             print("=" * 70)
-            print(f"Next CPCB check in {CHECK_INTERVAL} seconds.")
+            print(
+                "ONE-TIME CPCB UPDATE FINISHED"
+            )
             print("=" * 70)
 
-            time.sleep(CHECK_INTERVAL)
+        except Exception as e:
+
+            print()
+            print("=" * 70)
+            print(
+                "CPCB UPDATE ERROR"
+            )
+            print("=" * 70)
+
+            print(e)
+
+            # Important for GitHub Actions:
+            # non-zero exit means workflow failure.
+            sys.exit(1)
+
+        return
+
+    # ========================================================
+    # CONTINUOUS LOCAL MODE
+    # ========================================================
+
+    while True:
+
+        try:
+
+            run_collection_cycle()
+
+            print()
+            print("=" * 70)
+
+            print(
+                f"Next CPCB check in "
+                f"{CHECK_INTERVAL} seconds."
+            )
+
+            print("=" * 70)
+
+            time.sleep(
+                CHECK_INTERVAL
+            )
 
         except KeyboardInterrupt:
+
             print()
             print("=" * 70)
-            print("CPCB COLLECTOR STOPPED")
+            print(
+                "CPCB COLLECTOR STOPPED"
+            )
             print("=" * 70)
+
             break
 
         except Exception as e:
-            print()
-            print("=" * 70)
-            print("UNEXPECTED COLLECTOR ERROR")
-            print("=" * 70)
-            print(e)
-            print()
-            print("Existing prediction retained.")
-            print(f"Retrying in {CHECK_INTERVAL} seconds.")
-            time.sleep(CHECK_INTERVAL)
 
+            print()
+            print("=" * 70)
+            print(
+                "UNEXPECTED COLLECTOR ERROR"
+            )
+            print("=" * 70)
+
+            print(e)
+
+            print()
+            print(
+                "Existing prediction retained."
+            )
+
+            print(
+                f"Retrying in "
+                f"{CHECK_INTERVAL} seconds."
+            )
+
+            time.sleep(
+                CHECK_INTERVAL
+            )
+
+
+# ============================================================
+# START
+# ============================================================
 
 if __name__ == "__main__":
     main()
