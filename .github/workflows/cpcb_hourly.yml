@@ -1,5 +1,7 @@
 name: CPCB Automatic Update
 
+# Scheduler refresh
+
 on:
   schedule:
     - cron: "*/5 * * * *"
