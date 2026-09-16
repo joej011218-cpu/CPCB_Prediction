@@ -782,7 +782,7 @@ def convert_records_to_hourly(records):
     data["value"] = pd.to_numeric(
         data[value_column],
         errors="coerce",
-    )
+    ).astype(float)
 
     # Remove records with unknown pollutant names.
     data = data.dropna(
