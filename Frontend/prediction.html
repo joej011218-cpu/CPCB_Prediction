@@ -117,6 +117,12 @@ body {
   background: var(--button-hover);
 }
 
+
+.page-nav{display:flex;justify-content:center;gap:10px;margin:18px 0 24px;flex-wrap:wrap}
+.nav-link{text-decoration:none;color:var(--text);background:var(--button-bg);border:1px solid var(--panel-border);border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700}
+.nav-link:hover{background:var(--button-hover)}
+.nav-link.active{border-color:var(--satisfactory)}
+
 /* =========================================================
    PANELS
 ========================================================= */
@@ -327,6 +333,47 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+
+/* HEALTH PRECAUTION MODAL */
+.category-button {
+  display:inline-block; border:none; border-radius:5px; padding:6px 10px;
+  color:#fff; font-size:10px; font-weight:700; cursor:pointer;
+  transition:transform .15s ease, opacity .15s ease;
+}
+.category-button:hover { transform:translateY(-1px); opacity:.9; }
+.category-button:focus { outline:2px solid var(--text); outline-offset:2px; }
+.summary-category { cursor:pointer; }
+.precaution-modal {
+  display:none; position:fixed; inset:0; z-index:9999;
+  background:rgba(0,0,0,.68); padding:20px; align-items:center; justify-content:center;
+}
+.precaution-modal.show { display:flex; }
+.precaution-card {
+  position:relative; width:min(620px,100%); max-height:90vh; overflow-y:auto;
+  background:var(--panel); border:1px solid var(--panel-border); border-radius:14px;
+  padding:26px; box-shadow:0 22px 60px rgba(0,0,0,.35);
+}
+.precaution-close {
+  position:absolute; top:14px; right:14px; width:34px; height:34px;
+  border:1px solid var(--panel-border); border-radius:50%; background:var(--button-bg);
+  color:var(--text); font-size:20px; cursor:pointer;
+}
+.precaution-close:hover { background:var(--button-hover); }
+.precaution-heading { font-size:20px; font-weight:700; padding-right:44px; margin-bottom:18px; }
+.precaution-status { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+.precaution-category { display:inline-block; padding:7px 11px; border-radius:5px; color:#fff; font-size:12px; font-weight:700; text-transform:uppercase; }
+.precaution-aqi { font-size:13px; font-weight:700; }
+.precaution-message { font-size:14px; line-height:1.6; margin-bottom:16px; }
+.precaution-list { list-style:none; margin:0 0 18px; padding:0; }
+.precaution-list li { position:relative; padding:8px 0 8px 25px; font-size:13px; line-height:1.5; border-bottom:1px solid var(--panel-border); }
+.precaution-list li:last-child { border-bottom:none; }
+.precaution-list li::before { content:"✓"; position:absolute; left:0; top:8px; font-weight:700; }
+.precaution-meta { background:var(--bg); border:1px solid var(--panel-border); border-radius:8px; padding:12px 14px; color:var(--text-muted); font-size:11px; line-height:1.6; }
+@media (max-width:520px) {
+  .precaution-card { padding:22px 16px 18px; }
+  .precaution-status { align-items:flex-start; flex-direction:column; }
+}
+
 /* =========================================================
    ERROR
 ========================================================= */
@@ -433,6 +480,11 @@ tbody tr:hover {
     </button>
 
   </div>
+
+<nav class="page-nav" aria-label="Dashboard navigation">
+<a class="nav-link active" href="prediction.html">Prediction</a>
+<a class="nav-link" href="precautions.html">AQI Categories &amp; Precautions</a>
+</nav>
 
   <!-- ======================================================
        24-HOUR FORECAST
@@ -620,6 +672,21 @@ tbody tr:hover {
 
     </div>
 
+  </div>
+
+
+  <div id="precautionModal" class="precaution-modal" role="dialog" aria-modal="true" aria-labelledby="precautionHeading">
+    <div class="precaution-card">
+      <button id="precautionClose" class="precaution-close" type="button" aria-label="Close health precautions">&times;</button>
+      <div id="precautionHeading" class="precaution-heading">Health Precautions</div>
+      <div class="precaution-status">
+        <span id="precautionCategory" class="precaution-category">—</span>
+        <span id="precautionAQI" class="precaution-aqi">Predicted AQI: —</span>
+      </div>
+      <div id="precautionMessage" class="precaution-message">—</div>
+      <ul id="precautionList" class="precaution-list"></ul>
+      <div id="precautionMeta" class="precaution-meta">—</div>
+    </div>
   </div>
 
   <div id="errorBox" class="error"></div>
@@ -825,6 +892,112 @@ function formatTime(timestamp) {
   );
 }
 
+
+/* ============================================================
+   HEALTH PRECAUTIONS
+============================================================ */
+function getPrecautionInfo(aqi) {
+  const category = getCategory(aqi);
+  const guidance = {
+    "Good": {
+      message: "Air quality is considered good and poses little or no risk for most people.",
+      actions: [
+        "Normal outdoor activities can continue.",
+        "Outdoor exercise and recreation can continue as usual.",
+        "Continue normal daily activities."
+      ]
+    },
+    "Satisfactory": {
+      message: "Air quality is generally acceptable. Sensitive people may experience minor breathing discomfort.",
+      actions: [
+        "Normal activities can continue for most people.",
+        "Sensitive people should monitor for breathing discomfort.",
+        "Reduce prolonged or strenuous outdoor exertion if discomfort occurs."
+      ]
+    },
+    "Moderate": {
+      message: "Breathing discomfort may occur in people with lung, asthma or heart conditions, especially during prolonged exposure.",
+      actions: [
+        "Sensitive groups should consider reducing prolonged or strenuous outdoor activity.",
+        "Take additional breaks during outdoor physical activity.",
+        "Move indoors if coughing, wheezing or breathing discomfort occurs."
+      ]
+    },
+    "Poor": {
+      message: "Prolonged exposure may cause breathing discomfort, particularly for people with respiratory or heart conditions.",
+      actions: [
+        "Reduce prolonged or strenuous outdoor physical activity.",
+        "Sensitive groups should minimize outdoor exertion.",
+        "Consider moving exercise and other strenuous activities indoors."
+      ]
+    },
+    "Very Poor": {
+      message: "Prolonged exposure can cause respiratory illness or significant breathing discomfort.",
+      actions: [
+        "Avoid strenuous outdoor physical activity.",
+        "Sensitive groups should remain indoors as much as practical.",
+        "Keep outdoor exposure as short as reasonably possible."
+      ]
+    },
+    "Severe": {
+      message: "Air quality may affect healthy people and can seriously affect people with existing respiratory or cardiovascular conditions.",
+      actions: [
+        "Avoid outdoor physical activity where possible.",
+        "Minimize exposure to outdoor air, especially for sensitive groups.",
+        "Move strenuous activities indoors and reduce unnecessary outdoor exposure."
+      ]
+    },
+    "Unavailable": {
+      message: "Health guidance is unavailable because a valid AQI value was not provided.",
+      actions: ["Check the latest CPCB observation before planning outdoor activity."]
+    }
+  };
+  return guidance[category] || guidance["Unavailable"];
+}
+
+function showPrecautionModal(aqi, timestamp, horizonLabel, valueLabel = "Predicted AQI") {
+  const numericAQI = Number(aqi);
+  const validAQI = !isNaN(numericAQI);
+  const category = getCategory(numericAQI);
+  const info = getPrecautionInfo(numericAQI);
+  const color = getColor(numericAQI);
+
+  document.getElementById("precautionCategory").textContent = category;
+  document.getElementById("precautionCategory").style.background = color;
+  document.getElementById("precautionAQI").textContent =
+    valueLabel + ": " + (validAQI ? numericAQI.toFixed(1) : "—");
+  document.getElementById("precautionMessage").textContent = info.message;
+
+  const list = document.getElementById("precautionList");
+  list.innerHTML = "";
+  info.actions.forEach(action => {
+    const li = document.createElement("li");
+    li.textContent = action;
+    list.appendChild(li);
+  });
+
+  let meta = horizonLabel ? horizonLabel + " forecast" : "AQI guidance";
+  if (timestamp) meta += " • " + formatTime(timestamp);
+  meta += " • Guidance is based on the AQI value shown for this period.";
+  document.getElementById("precautionMeta").textContent = meta;
+
+  document.getElementById("precautionModal").classList.add("show");
+  document.body.style.overflow = "hidden";
+}
+
+function closePrecautionModal() {
+  document.getElementById("precautionModal").classList.remove("show");
+  document.body.style.overflow = "";
+}
+
+document.getElementById("precautionClose").addEventListener("click", closePrecautionModal);
+document.getElementById("precautionModal").addEventListener("click", function(event) {
+  if (event.target === this) closePrecautionModal();
+});
+document.addEventListener("keydown", function(event) {
+  if (event.key === "Escape") closePrecautionModal();
+});
+
 /* ============================================================
    FORECAST SUMMARY CARD
 ============================================================ */
@@ -885,6 +1058,16 @@ function setSummaryCard(
 
   categoryElement.style.background =
     color;
+
+  categoryElement.title = "Click to view health precautions";
+  categoryElement.onclick = function() {
+    showPrecautionModal(
+      aqi,
+      prediction.forecast_timestamp,
+      "+" + horizon + "h",
+      "Predicted AQI"
+    );
+  };
 }
 
 /* ============================================================
@@ -1296,10 +1479,28 @@ function displayForecastTable(
         </td>
 
         <td>
-          ${getCategory(aqi)}
+          <button
+            type="button"
+            class="category-button"
+            style="background:${getColor(aqi)};"
+            title="Click to view health precautions"
+          >
+            ${getCategory(aqi)}
+          </button>
         </td>
 
       `;
+
+      const categoryButton = row.querySelector(".category-button");
+
+      categoryButton.addEventListener("click", function() {
+        showPrecautionModal(
+          aqi,
+          prediction.forecast_timestamp,
+          "+" + prediction.horizon_hours + "h",
+          "Predicted AQI"
+        );
+      });
 
       tbody.appendChild(
         row
@@ -1349,6 +1550,17 @@ function displayCurrent(
 
     currentCategory.style.background =
       getColor(aqi);
+
+    currentCategory.style.cursor = "pointer";
+    currentCategory.title = "Click to view health precautions";
+    currentCategory.onclick = function() {
+      showPrecautionModal(
+        aqi,
+        data.timestamp,
+        "Current CPCB reference",
+        "Current AQI"
+      );
+    };
 
   } else {
 
