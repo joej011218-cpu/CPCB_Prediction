@@ -30,10 +30,7 @@ ENV_PATH = os.path.join(
     ".env"
 )
 
-load_dotenv(
-    ENV_PATH
-)
-
+load_dotenv(ENV_PATH)
 
 DATABASE_PATH = os.path.join(
     BASE_DIR,
@@ -62,9 +59,15 @@ API_KEY = os.getenv(
 )
 
 CHECK_INTERVAL = 60
-API_TIMEOUT = 45
+
+API_TIMEOUT = 60
+
 MAX_RETRIES = 3
-RETRY_DELAY = 10
+
+# Empty responses can be temporary, so wait before trying again.
+RETRY_DELAY = 20
+
+API_LIMIT = 100
 
 
 def get_api_params():
@@ -72,7 +75,7 @@ def get_api_params():
         "api-key": API_KEY,
         "format": "json",
         "offset": 0,
-        "limit": 100,
+        "limit": API_LIMIT,
         "filters[state]": "Gujarat",
         "filters[city]": "Vadodara",
     }
@@ -99,12 +102,17 @@ POLLUTANT_NAME_MAP = {
     "PM2.5": "pm25",
     "PM2_5": "pm25",
     "PM2-5": "pm25",
+
     "PM10": "pm10",
+
     "NO": "no",
     "NO2": "no2",
+
     "NH3": "nh3",
     "SO2": "so2",
+
     "CO": "co",
+
     "O3": "o3",
     "OZONE": "o3",
 }
@@ -115,6 +123,7 @@ POLLUTANT_NAME_MAP = {
 # ============================================================
 
 def initialize_database():
+
     print()
     print("=" * 70)
     print("CHECKING DATABASE")
@@ -129,6 +138,7 @@ def initialize_database():
     conn = get_connection()
 
     try:
+
         cursor = conn.cursor()
 
         cursor.execute(
@@ -153,11 +163,20 @@ def initialize_database():
         conn.close()
 
     if using_postgres():
-        print("Database ready: PostgreSQL")
+
+        print(
+            "Database ready: PostgreSQL"
+        )
 
     else:
-        print("Database ready:")
-        print(DATABASE_PATH)
+
+        print(
+            "Database ready:"
+        )
+
+        print(
+            DATABASE_PATH
+        )
 
 
 # ============================================================
@@ -165,17 +184,20 @@ def initialize_database():
 # ============================================================
 
 def fetch_cpcb_data():
+
     print()
     print("=" * 70)
     print("FETCHING CPCB VADODARA DATA")
     print("=" * 70)
 
     if not API_KEY:
+
         print()
         print(
             "ERROR: CPCB_API_KEY environment variable "
             "is not configured."
         )
+
         return None
 
     session = requests.Session()
@@ -199,7 +221,9 @@ def fetch_cpcb_data():
         1,
         MAX_RETRIES + 1
     ):
+
         try:
+
             print()
             print(
                 f"API attempt "
@@ -217,19 +241,36 @@ def fetch_cpcb_data():
                 response.status_code
             )
 
-            # ------------------------------------------------
-            # SUCCESS
-            # ------------------------------------------------
+            # =================================================
+            # HTTP 200
+            # =================================================
 
             if response.status_code == 200:
 
                 try:
+
                     result = response.json()
 
                 except ValueError:
+
+                    print()
                     print(
                         "ERROR: CPCB returned invalid JSON."
                     )
+
+                    if attempt < MAX_RETRIES:
+
+                        print(
+                            f"Retrying in "
+                            f"{RETRY_DELAY} seconds..."
+                        )
+
+                        time.sleep(
+                            RETRY_DELAY
+                        )
+
+                        continue
+
                     return None
 
                 records = result.get(
@@ -237,58 +278,170 @@ def fetch_cpcb_data():
                     []
                 )
 
+                if records is None:
+                    records = []
+
                 print()
-                print("=" * 70)
-                print("RAW CPCB CO RECORD")
-                print("=" * 70)
+                print(
+                    "API response total:",
+                    result.get("total")
+                )
 
-                for record in records:
-
-                    if (
-                        str(
-                            record.get(
-                                "pollutant_id",
-                                ""
-                            )
-                        ).upper()
-                        == "CO"
-                    ):
-                        print(record)
-
-                if not records:
-                    print(
-                        "CPCB API returned zero records."
-                    )
-                    return None
+                print(
+                    "API response count:",
+                    result.get("count")
+                )
 
                 print(
                     "Records received:",
                     len(records)
                 )
 
+                # =============================================
+                # IMPORTANT:
+                # HTTP 200 + zero records is retried.
+                # =============================================
+
+                if not records:
+
+                    print()
+                    print(
+                        "WARNING: CPCB API returned "
+                        "zero records."
+                    )
+
+                    if attempt < MAX_RETRIES:
+
+                        print(
+                            f"Retrying empty CPCB response "
+                            f"in {RETRY_DELAY} seconds..."
+                        )
+
+                        time.sleep(
+                            RETRY_DELAY
+                        )
+
+                        continue
+
+                    print()
+                    print("=" * 70)
+                    print(
+                        "CPCB API RETURNED NO DATA"
+                    )
+                    print("=" * 70)
+
+                    print(
+                        f"Zero records returned after "
+                        f"{MAX_RETRIES} attempts."
+                    )
+
+                    return None
+
+                # =============================================
+                # PRINT ONE CO RECORD FOR DIAGNOSTICS
+                # =============================================
+
+                print()
+                print("=" * 70)
+                print("RAW CPCB CO RECORD")
+                print("=" * 70)
+
+                co_record_found = False
+
+                for record in records:
+
+                    pollutant_id = str(
+                        record.get(
+                            "pollutant_id",
+                            ""
+                        )
+                    ).strip().upper()
+
+                    if pollutant_id == "CO":
+
+                        print(record)
+
+                        co_record_found = True
+
+                        break
+
+                if not co_record_found:
+
+                    print(
+                        "No CO record found in this response."
+                    )
+
+                # =============================================
+                # SHOW TIMESTAMP RANGE
+                # =============================================
+
+                timestamps = []
+
+                for record in records:
+
+                    timestamp_value = (
+                        record.get("last_update")
+                        or record.get("timestamp")
+                        or record.get("datetime")
+                    )
+
+                    if timestamp_value:
+
+                        parsed = pd.to_datetime(
+                            timestamp_value,
+                            errors="coerce",
+                            dayfirst=True,
+                        )
+
+                        if not pd.isna(parsed):
+
+                            timestamps.append(
+                                parsed
+                            )
+
+                if timestamps:
+
+                    print()
+                    print(
+                        "Oldest timestamp in API response:",
+                        min(timestamps)
+                    )
+
+                    print(
+                        "Newest timestamp in API response:",
+                        max(timestamps)
+                    )
+
+                print()
+                print(
+                    "CPCB API fetch successful."
+                )
+
                 return records
 
-            # ------------------------------------------------
+            # =================================================
             # TEMPORARY SERVER ERRORS
-            # ------------------------------------------------
+            # =================================================
 
             if response.status_code in (
+                429,
                 500,
                 502,
                 503,
                 504,
             ):
+
                 print()
                 print(
-                    "CPCB API HTTP error:"
+                    "Temporary CPCB API HTTP error:"
                 )
 
                 print(
-                    f"{response.status_code} "
-                    "Server Error"
+                    response.status_code
                 )
 
                 if attempt < MAX_RETRIES:
+
                     print(
                         f"Retrying in "
                         f"{RETRY_DELAY} seconds..."
@@ -305,20 +458,20 @@ def fetch_cpcb_data():
                 print("CPCB API FAILED")
                 print("=" * 70)
 
-                print(
-                    f"All {MAX_RETRIES} "
-                    "API attempts failed."
-                )
-
                 return None
 
-            # ------------------------------------------------
+            # =================================================
             # OTHER HTTP ERROR
-            # ------------------------------------------------
+            # =================================================
 
             print()
             print(
                 "CPCB API HTTP error:"
+            )
+
+            print(
+                "Status:",
+                response.status_code
             )
 
             print(
@@ -327,9 +480,9 @@ def fetch_cpcb_data():
 
             return None
 
-        # ----------------------------------------------------
+        # =====================================================
         # TIMEOUT
-        # ----------------------------------------------------
+        # =====================================================
 
         except requests.exceptions.Timeout:
 
@@ -358,9 +511,9 @@ def fetch_cpcb_data():
 
             return None
 
-        # ----------------------------------------------------
+        # =====================================================
         # CONNECTION ERROR
-        # ----------------------------------------------------
+        # =====================================================
 
         except requests.exceptions.ConnectionError as e:
 
@@ -386,9 +539,9 @@ def fetch_cpcb_data():
 
             return None
 
-        # ----------------------------------------------------
+        # =====================================================
         # REQUEST ERROR
-        # ----------------------------------------------------
+        # =====================================================
 
         except requests.exceptions.RequestException as e:
 
@@ -399,11 +552,24 @@ def fetch_cpcb_data():
 
             print(e)
 
+            if attempt < MAX_RETRIES:
+
+                print(
+                    f"Retrying in "
+                    f"{RETRY_DELAY} seconds..."
+                )
+
+                time.sleep(
+                    RETRY_DELAY
+                )
+
+                continue
+
             return None
 
-        # ----------------------------------------------------
+        # =====================================================
         # UNEXPECTED ERROR
-        # ----------------------------------------------------
+        # =====================================================
 
         except Exception as e:
 
@@ -490,9 +656,9 @@ def convert_records_to_hourly(records):
         df.columns.tolist()
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # TIMESTAMP COLUMN
-    # --------------------------------------------------------
+    # ========================================================
 
     timestamp_column = None
 
@@ -505,7 +671,9 @@ def convert_records_to_hourly(records):
     ]:
 
         if column in df.columns:
+
             timestamp_column = column
+
             break
 
     if timestamp_column is None:
@@ -518,9 +686,9 @@ def convert_records_to_hourly(records):
 
         return None
 
-    # --------------------------------------------------------
+    # ========================================================
     # POLLUTANT COLUMN
-    # --------------------------------------------------------
+    # ========================================================
 
     pollutant_column = None
 
@@ -531,7 +699,9 @@ def convert_records_to_hourly(records):
     ]:
 
         if column in df.columns:
+
             pollutant_column = column
+
             break
 
     if pollutant_column is None:
@@ -544,9 +714,9 @@ def convert_records_to_hourly(records):
 
         return None
 
-    # --------------------------------------------------------
+    # ========================================================
     # VALUE COLUMN
-    # --------------------------------------------------------
+    # ========================================================
 
     value_column = find_value_column(
         df
@@ -586,9 +756,9 @@ def convert_records_to_hourly(records):
         value_column
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # CLEAN DATA
-    # --------------------------------------------------------
+    # ========================================================
 
     data = df.copy()
 
@@ -612,12 +782,24 @@ def convert_records_to_hourly(records):
     data["value"] = pd.to_numeric(
         data[value_column],
         errors="coerce",
-    ).astype(float)
+    )
 
-    # --------------------------------------------------------
-    # CPCB CO:
-    # API value µg/m3 -> model/database mg/m3
-    # --------------------------------------------------------
+    # Remove records with unknown pollutant names.
+    data = data.dropna(
+        subset=["pollutant"]
+    )
+
+    # ========================================================
+    # CPCB CO
+    #
+    # CPCB API value:
+    # µg/m3
+    #
+    # Model/database:
+    # mg/m3
+    #
+    # Therefore divide by 1000.
+    # ========================================================
 
     co_mask = (
         data["pollutant"] == "co"
@@ -660,9 +842,9 @@ def convert_records_to_hourly(records):
         )
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # PIVOT POLLUTANTS
-    # --------------------------------------------------------
+    # ========================================================
 
     hourly = (
         data
@@ -677,13 +859,14 @@ def convert_records_to_hourly(records):
 
     hourly.columns.name = None
 
-    # --------------------------------------------------------
+    # ========================================================
     # ENSURE ALL POLLUTANT COLUMNS EXIST
-    # --------------------------------------------------------
+    # ========================================================
 
     for pollutant in POLLUTANTS:
 
         if pollutant not in hourly.columns:
+
             hourly[pollutant] = None
 
     hourly = hourly[
@@ -731,7 +914,15 @@ def get_latest_database_timestamp():
             """
         )
 
-    except Exception:
+    except Exception as e:
+
+        print()
+        print(
+            "Could not read latest database timestamp:"
+        )
+
+        print(e)
+
         return None
 
     if df.empty:
@@ -833,27 +1024,35 @@ def save_hourly_data(df):
 
             values = (
                 timestamp_string,
+
                 to_database_value(
                     row["pm25"]
                 ),
+
                 to_database_value(
                     row["pm10"]
                 ),
+
                 to_database_value(
                     row["no"]
                 ),
+
                 to_database_value(
                     row["no2"]
                 ),
+
                 to_database_value(
                     row["nh3"]
                 ),
+
                 to_database_value(
                     row["so2"]
                 ),
+
                 to_database_value(
                     row["co"]
                 ),
+
                 to_database_value(
                     row["o3"]
                 ),
@@ -871,6 +1070,7 @@ def save_hourly_data(df):
     except Exception:
 
         conn.rollback()
+
         raise
 
     finally:
@@ -888,6 +1088,18 @@ def collect_new_data():
 
     previous_latest_timestamp = (
         get_latest_database_timestamp()
+    )
+
+    print()
+    print("=" * 70)
+    print(
+        "DATABASE STATUS BEFORE CPCB FETCH"
+    )
+    print("=" * 70)
+
+    print(
+        "Latest database timestamp:",
+        previous_latest_timestamp
     )
 
     records = (
@@ -928,12 +1140,31 @@ def collect_new_data():
 
         return False
 
-    latest = hourly.iloc[-1]
+    # ========================================================
+    # FIND TRUE NEWEST API TIMESTAMP
+    # ========================================================
 
-    latest_api_timestamp = (
-        pd.Timestamp(
-            latest["timestamp"]
+    latest_api_timestamp = pd.Timestamp(
+        hourly["timestamp"].max()
+    )
+
+    latest_rows = hourly[
+        hourly["timestamp"]
+        == latest_api_timestamp
+    ]
+
+    if latest_rows.empty:
+
+        print()
+        print(
+            "ERROR: Latest CPCB row "
+            "could not be selected."
         )
+
+        return False
+
+    latest = (
+        latest_rows.iloc[-1]
     )
 
     print()
@@ -955,6 +1186,10 @@ def collect_new_data():
             latest[pollutant]
         )
 
+    # ========================================================
+    # SAVE ALL RETURNED HOURLY DATA
+    # ========================================================
+
     affected = (
         save_hourly_data(
             hourly
@@ -967,9 +1202,22 @@ def collect_new_data():
         affected
     )
 
-    # --------------------------------------------------------
+    # ========================================================
+    # CHECK DATABASE AFTER SAVE
+    # ========================================================
+
+    database_latest_after_save = (
+        get_latest_database_timestamp()
+    )
+
+    print(
+        "Database latest after save:",
+        database_latest_after_save
+    )
+
+    # ========================================================
     # EMPTY DATABASE
-    # --------------------------------------------------------
+    # ========================================================
 
     if previous_latest_timestamp is None:
 
@@ -987,14 +1235,13 @@ def collect_new_data():
         )
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # NEW CPCB HOUR
-    # --------------------------------------------------------
+    # ========================================================
 
     if (
         latest_api_timestamp
-        >
-        previous_latest_timestamp
+        > previous_latest_timestamp
     ):
 
         print()
@@ -1010,14 +1257,24 @@ def collect_new_data():
 
         return True
 
-    # --------------------------------------------------------
-    # SAME CPCB HOUR
-    # --------------------------------------------------------
+    # ========================================================
+    # SAME / OLDER CPCB HOUR
+    # ========================================================
 
     print()
     print(
         "Latest CPCB timestamp "
         "is unchanged."
+    )
+
+    print(
+        "Database timestamp:",
+        previous_latest_timestamp
+    )
+
+    print(
+        "API timestamp:",
+        latest_api_timestamp
     )
 
     return False
@@ -1183,9 +1440,9 @@ def main():
         PREDICTOR_PATH
     )
 
-    # --------------------------------------------------------
-    # CHECK FOR CLOUD ONE-TIME MODE
-    # --------------------------------------------------------
+    # ========================================================
+    # CLOUD ONE-TIME MODE
+    # ========================================================
 
     run_once = (
         "--once" in sys.argv
@@ -1209,9 +1466,9 @@ def main():
             "seconds"
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # INITIALIZE DATABASE
-    # --------------------------------------------------------
+    # ========================================================
 
     initialize_database()
 
@@ -1243,8 +1500,6 @@ def main():
 
             print(e)
 
-            # Important for GitHub Actions:
-            # non-zero exit means workflow failure.
             sys.exit(1)
 
         return
