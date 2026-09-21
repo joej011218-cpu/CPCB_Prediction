@@ -16,6 +16,10 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # ======================================================
+      # SETUP
+      # ======================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -31,10 +35,50 @@ jobs:
           pip install gdown
 
       # ======================================================
-      # RANDOM FOREST MODEL CACHE
+      # CHECK CPCB FIRST
+      # ======================================================
+
+      - name: Check for new CPCB data
+        id: cpcb-check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CPCB_API_KEY: ${{ secrets.CPCB_API_KEY }}
+        shell: bash
+        run: |
+          set +e
+
+          python cpcb_collector.py --collect-only
+          EXIT_CODE=$?
+
+          set -e
+
+          echo "Collector exit code: $EXIT_CODE"
+
+          if [ "$EXIT_CODE" -eq 10 ]; then
+
+            echo "New CPCB hour detected."
+            echo "new_data=true" >> "$GITHUB_OUTPUT"
+
+          elif [ "$EXIT_CODE" -eq 0 ]; then
+
+            echo "No new CPCB hour."
+            echo "new_data=false" >> "$GITHUB_OUTPUT"
+
+          else
+
+            echo "CPCB collector failed."
+            exit "$EXIT_CODE"
+
+          fi
+
+      # ======================================================
+      # RF MODEL CACHE
+      #
+      # Only runs when new CPCB data exists.
       # ======================================================
 
       - name: Restore Random Forest model cache
+        if: steps.cpcb-check.outputs.new_data == 'true'
         id: rf-cache
         uses: actions/cache@v4
         with:
@@ -42,11 +86,15 @@ jobs:
           key: vadodara-rf-models-v1
 
       # ======================================================
-      # DOWNLOAD ONLY WHEN CACHE IS NOT AVAILABLE
+      # DOWNLOAD ONLY IF:
+      # 1. New CPCB data exists
+      # 2. RF cache is unavailable
       # ======================================================
 
       - name: Download Random Forest models
-        if: steps.rf-cache.outputs.cache-hit != 'true'
+        if: >
+          steps.cpcb-check.outputs.new_data == 'true' &&
+          steps.rf-cache.outputs.cache-hit != 'true'
         run: |
           echo "RF model cache not found."
           echo "Downloading Random Forest deployment package..."
@@ -54,26 +102,27 @@ jobs:
           gdown "https://drive.google.com/uc?id=1K1VMc4iyp7_9PFy2JenPXawA81cnWf1v" \
             -O RF_Deployment.zip
 
-          echo "Downloaded:"
           ls -lh RF_Deployment.zip
 
       - name: Extract Random Forest models
-        if: steps.rf-cache.outputs.cache-hit != 'true'
+        if: >
+          steps.cpcb-check.outputs.new_data == 'true' &&
+          steps.rf-cache.outputs.cache-hit != 'true'
         run: |
           echo "Extracting Random Forest models..."
 
           unzip -q RF_Deployment.zip
 
-          echo "Random Forest package extracted."
           du -sh RF_Deployment
 
           rm -f RF_Deployment.zip
 
       # ======================================================
-      # VERIFY MODELS
+      # VERIFY RF MODELS
       # ======================================================
 
       - name: Verify Random Forest models
+        if: steps.cpcb-check.outputs.new_data == 'true'
         run: |
           echo "Verifying Random Forest deployment..."
 
@@ -86,19 +135,42 @@ jobs:
           test -f "RF_Deployment/horizon_24h/model_config.joblib"
 
           echo "Random Forest models verified successfully."
+
           du -sh RF_Deployment
 
       # ======================================================
-      # CPCB UPDATE + RANDOM FOREST FORECAST
+      # GENERATE NEW RF FORECAST
       # ======================================================
 
-      - name: Update CPCB data and forecast
+      - name: Generate Random Forest forecast
+        if: steps.cpcb-check.outputs.new_data == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          CPCB_API_KEY: ${{ secrets.CPCB_API_KEY }}
 
           RF_MODEL_BASE: RF_Deployment
           RF_MODEL_FILENAME: random_forest_delta_model.joblib
 
         run: |
-          python cpcb_collector.py --once
+          echo "=========================================="
+          echo "NEW CPCB DATA FOUND"
+          echo "STARTING RANDOM FOREST FORECAST"
+          echo "=========================================="
+
+          python predictor.py
+
+          echo "=========================================="
+          echo "RANDOM FOREST FORECAST FINISHED"
+          echo "=========================================="
+
+      # ======================================================
+      # NOTHING NEW
+      # ======================================================
+
+      - name: No new CPCB data
+        if: steps.cpcb-check.outputs.new_data == 'false'
+        run: |
+          echo "=========================================="
+          echo "NO NEW CPCB HOUR"
+          echo "Existing prediction retained."
+          echo "Random Forest models were not restored."
+          echo "=========================================="

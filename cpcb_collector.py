@@ -59,9 +59,7 @@ API_KEY = os.getenv(
 )
 
 CHECK_INTERVAL = 60
-
 API_TIMEOUT = 60
-
 MAX_RETRIES = 3
 
 # Empty responses can be temporary, so wait before trying again.
@@ -298,8 +296,7 @@ def fetch_cpcb_data():
                 )
 
                 # =============================================
-                # IMPORTANT:
-                # HTTP 200 + zero records is retried.
+                # HTTP 200 + ZERO RECORDS
                 # =============================================
 
                 if not records:
@@ -1441,14 +1438,24 @@ def main():
     )
 
     # ========================================================
-    # CLOUD ONE-TIME MODE
+    # COMMAND-LINE MODES
     # ========================================================
 
     run_once = (
         "--once" in sys.argv
     )
 
-    if run_once:
+    collect_only = (
+        "--collect-only" in sys.argv
+    )
+
+    if collect_only:
+
+        print(
+            "Mode: CLOUD COLLECTION ONLY"
+        )
+
+    elif run_once:
 
         print(
             "Mode: ONE-TIME CLOUD UPDATE"
@@ -1473,7 +1480,68 @@ def main():
     initialize_database()
 
     # ========================================================
-    # CLOUD / GITHUB ACTIONS MODE
+    # CLOUD COLLECTION-ONLY MODE
+    #
+    # Used by GitHub Actions BEFORE restoring RF models.
+    #
+    # Exit codes:
+    #
+    #   0  = No new CPCB timestamp
+    #   10 = New CPCB timestamp found and saved
+    #   1  = Collector error
+    #
+    # IMPORTANT:
+    # predictor.py is NOT executed in this mode.
+    # ========================================================
+
+    if collect_only:
+
+        try:
+
+            new_data = (
+                collect_new_data()
+            )
+
+            print()
+            print("=" * 70)
+
+            if new_data:
+
+                print(
+                    "NEW CPCB DATA AVAILABLE"
+                )
+
+                print("=" * 70)
+
+                sys.exit(10)
+
+            print(
+                "NO NEW CPCB DATA"
+            )
+
+            print("=" * 70)
+
+            sys.exit(0)
+
+        except Exception as e:
+
+            print()
+            print("=" * 70)
+            print(
+                "CPCB UPDATE ERROR"
+            )
+            print("=" * 70)
+
+            print(e)
+
+            sys.exit(1)
+
+    # ========================================================
+    # NORMAL ONE-TIME CLOUD MODE
+    #
+    # This preserves the original --once behavior:
+    #
+    # collect CPCB -> detect new hour -> run predictor
     # ========================================================
 
     if run_once:
