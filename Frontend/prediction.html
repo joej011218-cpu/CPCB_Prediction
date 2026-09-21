@@ -466,7 +466,6 @@ tbody tr:hover {
 
     <div class="page-header">
       <h1>Vadodara 24-Hour AQI Prediction</h1>
-      <p>XGBoost Delta Forecasting Model</p>
       <div id="liveClock" class="live-clock">—</div>
     </div>
 
@@ -536,18 +535,6 @@ tbody tr:hover {
       Loading 24-hour AQI prediction...
     </div>
 
-    <div
-      id="chartWrapper"
-      class="chart-container"
-      style="display:none;"
-    >
-      <canvas id="forecastChart"></canvas>
-    </div>
-
-    <div id="forecastOrigin" class="forecast-origin">
-      —
-    </div>
-
   </div>
 
   <!-- ======================================================
@@ -582,6 +569,18 @@ tbody tr:hover {
 
       </table>
 
+    </div>
+
+    <div
+      id="chartWrapper"
+      class="chart-container"
+      style="display:none; margin-top:24px;"
+    >
+      <canvas id="forecastChart"></canvas>
+    </div>
+
+    <div id="forecastOrigin" class="forecast-origin">
+      —
     </div>
 
   </div>
