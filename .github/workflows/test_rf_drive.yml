@@ -1,0 +1,51 @@
+name: Test RF Model Download
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-rf-download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install gdown
+        run: pip install gdown
+
+      - name: Download RF models from Google Drive
+        run: |
+          gdown "https://drive.google.com/uc?id=1K1VMc4iyp7_9PFy2JenPXawA81cnWf1v" \
+            -O RF_Deployment.zip
+
+      - name: Check downloaded file
+        run: |
+          ls -lh RF_Deployment.zip
+
+      - name: Extract RF models
+        run: |
+          unzip -q RF_Deployment.zip
+          echo "Extraction completed."
+
+      - name: Verify RF deployment
+        run: |
+          echo "Checking model folders..."
+
+          test -f "RF_Deployment/horizon_01h/random_forest_delta_model.joblib"
+          test -f "RF_Deployment/horizon_01h/feature_columns.joblib"
+          test -f "RF_Deployment/horizon_01h/model_config.joblib"
+
+          test -f "RF_Deployment/horizon_24h/random_forest_delta_model.joblib"
+          test -f "RF_Deployment/horizon_24h/feature_columns.joblib"
+          test -f "RF_Deployment/horizon_24h/model_config.joblib"
+
+          echo "RF MODEL PACKAGE VERIFIED SUCCESSFULLY"
+
+          du -sh RF_Deployment
