@@ -6,6 +6,10 @@ on:
 
   workflow_dispatch:
 
+concurrency:
+  group: cpcb-vadodara-update
+  cancel-in-progress: false
+
 jobs:
   update-cpcb:
     runs-on: ubuntu-latest
@@ -19,14 +23,32 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install gdown
 
+      # ======================================================
+      # RANDOM FOREST MODEL CACHE
+      # ======================================================
+
+      - name: Restore Random Forest model cache
+        id: rf-cache
+        uses: actions/cache@v4
+        with:
+          path: RF_Deployment
+          key: vadodara-rf-models-v1
+
+      # ======================================================
+      # DOWNLOAD ONLY WHEN CACHE IS NOT AVAILABLE
+      # ======================================================
+
       - name: Download Random Forest models
+        if: steps.rf-cache.outputs.cache-hit != 'true'
         run: |
+          echo "RF model cache not found."
           echo "Downloading Random Forest deployment package..."
 
           gdown "https://drive.google.com/uc?id=1K1VMc4iyp7_9PFy2JenPXawA81cnWf1v" \
@@ -36,18 +58,39 @@ jobs:
           ls -lh RF_Deployment.zip
 
       - name: Extract Random Forest models
+        if: steps.rf-cache.outputs.cache-hit != 'true'
         run: |
+          echo "Extracting Random Forest models..."
+
           unzip -q RF_Deployment.zip
 
           echo "Random Forest package extracted."
           du -sh RF_Deployment
 
-          test -f "RF_Deployment/horizon_01h/random_forest_delta_model.joblib"
-          test -f "RF_Deployment/horizon_24h/random_forest_delta_model.joblib"
-
-          echo "Random Forest models verified."
-
           rm -f RF_Deployment.zip
+
+      # ======================================================
+      # VERIFY MODELS
+      # ======================================================
+
+      - name: Verify Random Forest models
+        run: |
+          echo "Verifying Random Forest deployment..."
+
+          test -f "RF_Deployment/horizon_01h/random_forest_delta_model.joblib"
+          test -f "RF_Deployment/horizon_01h/feature_columns.joblib"
+          test -f "RF_Deployment/horizon_01h/model_config.joblib"
+
+          test -f "RF_Deployment/horizon_24h/random_forest_delta_model.joblib"
+          test -f "RF_Deployment/horizon_24h/feature_columns.joblib"
+          test -f "RF_Deployment/horizon_24h/model_config.joblib"
+
+          echo "Random Forest models verified successfully."
+          du -sh RF_Deployment
+
+      # ======================================================
+      # CPCB UPDATE + RANDOM FOREST FORECAST
+      # ======================================================
 
       - name: Update CPCB data and forecast
         env:
