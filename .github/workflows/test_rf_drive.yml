@@ -6,7 +6,7 @@ on:
 jobs:
   test-rf-download:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -17,11 +17,15 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install gdown
-        run: pip install gdown
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install gdown
 
       - name: Download RF models from Google Drive
         run: |
+          echo "Downloading Random Forest models..."
+
           gdown "https://drive.google.com/uc?id=1K1VMc4iyp7_9PFy2JenPXawA81cnWf1v" \
             -O RF_Deployment.zip
 
@@ -49,3 +53,19 @@ jobs:
           echo "RF MODEL PACKAGE VERIFIED SUCCESSFULLY"
 
           du -sh RF_Deployment
+
+      - name: Run Random Forest predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RF_MODEL_BASE: RF_Deployment
+          RF_MODEL_FILENAME: random_forest_delta_model.joblib
+        run: |
+          echo "=========================================="
+          echo "STARTING RANDOM FOREST CLOUD TEST"
+          echo "=========================================="
+
+          python predictor.py
+
+          echo "=========================================="
+          echo "RANDOM FOREST CLOUD TEST FINISHED"
+          echo "=========================================="
