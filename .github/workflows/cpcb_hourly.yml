@@ -1,17 +1,15 @@
 name: CPCB Automatic Update
 
-# Scheduler refresh
-
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "15,45 * * * *"
 
   workflow_dispatch:
 
 jobs:
   update-cpcb:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -23,10 +21,41 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install gdown
+
+      - name: Download Random Forest models
+        run: |
+          echo "Downloading Random Forest deployment package..."
+
+          gdown "https://drive.google.com/uc?id=1K1VMc4iyp7_9PFy2JenPXawA81cnWf1v" \
+            -O RF_Deployment.zip
+
+          echo "Downloaded:"
+          ls -lh RF_Deployment.zip
+
+      - name: Extract Random Forest models
+        run: |
+          unzip -q RF_Deployment.zip
+
+          echo "Random Forest package extracted."
+          du -sh RF_Deployment
+
+          test -f "RF_Deployment/horizon_01h/random_forest_delta_model.joblib"
+          test -f "RF_Deployment/horizon_24h/random_forest_delta_model.joblib"
+
+          echo "Random Forest models verified."
+
+          rm -f RF_Deployment.zip
 
       - name: Update CPCB data and forecast
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           CPCB_API_KEY: ${{ secrets.CPCB_API_KEY }}
-        run: python cpcb_collector.py --once
+
+          RF_MODEL_BASE: RF_Deployment
+          RF_MODEL_FILENAME: random_forest_delta_model.joblib
+
+        run: |
+          python cpcb_collector.py --once

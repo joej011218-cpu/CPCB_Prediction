@@ -1,6 +1,9 @@
 import os
+import gc
+
 from database import read_dataframe
 from prediction_storage import save_predictions_to_postgres
+
 import joblib
 import numpy as np
 import pandas as pd
@@ -11,8 +14,45 @@ import pandas as pd
 # ============================================================
 
 DATABASE_PATH = "data/cpcb_vadodara.db"
-MODEL_BASE = "models/Vadodara"
+
+# ------------------------------------------------------------
+# RANDOM FOREST MODEL LOCATION
+#
+# LOCAL DEFAULT:
+#   models/Vadodara/Random Forest
+#
+# GITHUB ACTIONS / CLOUD:
+#   RF_MODEL_BASE=RF_Deployment
+#
+# This allows the same predictor.py to work locally and online.
+# ------------------------------------------------------------
+
+MODEL_BASE = os.getenv(
+    "RF_MODEL_BASE",
+    "models/Vadodara/Random Forest"
+)
+
+# ------------------------------------------------------------
+# RANDOM FOREST MODEL FILENAME
+#
+# LOCAL DEFAULT:
+#   random_forest_delta_model_compressed.joblib
+#
+# CLOUD:
+#   random_forest_delta_model.joblib
+# ------------------------------------------------------------
+
+MODEL_FILENAME = os.getenv(
+    "RF_MODEL_FILENAME",
+    "random_forest_delta_model_compressed.joblib"
+)
+
 OUTPUT_FILE = "vadodara_live_predictions.csv"
+
+
+# ============================================================
+# FEATURE CONFIGURATION
+# ============================================================
 
 AQI_LAGS = [
     1, 2, 3, 6, 12, 24, 48, 72, 168
@@ -36,11 +76,11 @@ CHANGE_LAGS = [
 
 
 # ============================================================
-# IMPORTANT:
-# NO HAS BEEN COMPLETELY REMOVED
+# POLLUTANTS
 #
-# These are the ONLY pollutants used by the trained
-# 224-feature XGBoost model.
+# NO IS EXCLUDED.
+#
+# These seven pollutants match the 224-feature training setup.
 # ============================================================
 
 POLLUTANTS = [
@@ -53,12 +93,6 @@ POLLUTANTS = [
     "o3"
 ]
 
-
-# ============================================================
-# CPCB AQI POLLUTANTS
-#
-# NO is NOT part of CPCB composite AQI.
-# ============================================================
 
 AQI_POLLUTANTS = [
     "pm25",
@@ -84,7 +118,6 @@ PM25_BREAKPOINTS = [
     (251, np.inf, 401, 500)
 ]
 
-
 PM10_BREAKPOINTS = [
     (0, 50, 0, 50),
     (51, 100, 51, 100),
@@ -93,7 +126,6 @@ PM10_BREAKPOINTS = [
     (351, 430, 301, 400),
     (431, np.inf, 401, 500)
 ]
-
 
 NO2_BREAKPOINTS = [
     (0, 40, 0, 50),
@@ -104,7 +136,6 @@ NO2_BREAKPOINTS = [
     (401, np.inf, 401, 500)
 ]
 
-
 NH3_BREAKPOINTS = [
     (0, 200, 0, 50),
     (201, 400, 51, 100),
@@ -113,7 +144,6 @@ NH3_BREAKPOINTS = [
     (1201, 1800, 301, 400),
     (1801, np.inf, 401, 500)
 ]
-
 
 SO2_BREAKPOINTS = [
     (0, 40, 0, 50),
@@ -124,7 +154,6 @@ SO2_BREAKPOINTS = [
     (1601, np.inf, 401, 500)
 ]
 
-
 CO_BREAKPOINTS = [
     (0, 1.0, 0, 50),
     (1.1, 2.0, 51, 100),
@@ -133,7 +162,6 @@ CO_BREAKPOINTS = [
     (17.1, 34.0, 301, 400),
     (34.1, np.inf, 401, 500)
 ]
-
 
 O3_BREAKPOINTS = [
     (0, 50, 0, 50),
@@ -146,7 +174,7 @@ O3_BREAKPOINTS = [
 
 
 # ============================================================
-# SUBINDEX
+# CALCULATE SUB-INDEX
 # ============================================================
 
 def calculate_subindex(value, breakpoints):
@@ -176,102 +204,34 @@ def calculate_subindex(value, breakpoints):
 
 
 # ============================================================
-# CPCB AQI
+# CALCULATE CPCB AQI
 # ============================================================
 
 def calculate_cpcb_aqi(row):
 
     subindices = []
 
-    # --------------------------------------------------------
-    # PM2.5
-    # --------------------------------------------------------
+    pollutant_values = [
+        ("pm25_24h", PM25_BREAKPOINTS),
+        ("pm10_24h", PM10_BREAKPOINTS),
+        ("no2_24h", NO2_BREAKPOINTS),
+        ("nh3_24h", NH3_BREAKPOINTS),
+        ("so2_24h", SO2_BREAKPOINTS),
+        ("co_8h", CO_BREAKPOINTS),
+        ("o3_8h", O3_BREAKPOINTS),
+    ]
 
-    value = calculate_subindex(
-        row["pm25_24h"],
-        PM25_BREAKPOINTS
-    )
+    for column, breakpoints in pollutant_values:
 
-    if not pd.isna(value):
-        subindices.append(value)
+        value = calculate_subindex(
+            row[column],
+            breakpoints
+        )
 
-    # --------------------------------------------------------
-    # PM10
-    # --------------------------------------------------------
+        if not pd.isna(value):
+            subindices.append(value)
 
-    value = calculate_subindex(
-        row["pm10_24h"],
-        PM10_BREAKPOINTS
-    )
-
-    if not pd.isna(value):
-        subindices.append(value)
-
-    # --------------------------------------------------------
-    # NO2
-    # --------------------------------------------------------
-
-    value = calculate_subindex(
-        row["no2_24h"],
-        NO2_BREAKPOINTS
-    )
-
-    if not pd.isna(value):
-        subindices.append(value)
-
-    # --------------------------------------------------------
-    # NH3
-    # --------------------------------------------------------
-
-    value = calculate_subindex(
-        row["nh3_24h"],
-        NH3_BREAKPOINTS
-    )
-
-    if not pd.isna(value):
-        subindices.append(value)
-
-    # --------------------------------------------------------
-    # SO2
-    # --------------------------------------------------------
-
-    value = calculate_subindex(
-        row["so2_24h"],
-        SO2_BREAKPOINTS
-    )
-
-    if not pd.isna(value):
-        subindices.append(value)
-
-    # --------------------------------------------------------
-    # CO
-    # --------------------------------------------------------
-
-    value = calculate_subindex(
-        row["co_8h"],
-        CO_BREAKPOINTS
-    )
-
-    if not pd.isna(value):
-        subindices.append(value)
-
-    # --------------------------------------------------------
-    # O3
-    # --------------------------------------------------------
-
-    value = calculate_subindex(
-        row["o3_8h"],
-        O3_BREAKPOINTS
-    )
-
-    if not pd.isna(value):
-        subindices.append(value)
-
-    # --------------------------------------------------------
-    # COMPOSITE AQI
-    # --------------------------------------------------------
-
-    if len(subindices) == 0:
+    if not subindices:
         return np.nan
 
     return max(subindices)
@@ -289,33 +249,27 @@ def load_database():
     print("=" * 80)
 
     query = """
-    SELECT
-        timestamp,
-        pm25,
-        pm10,
-        no2,
-        nh3,
-        so2,
-        co,
-        o3
+        SELECT
+            timestamp,
+            pm25,
+            pm10,
+            no2,
+            nh3,
+            so2,
+            co,
+            o3
         FROM cpcb_hourly
         ORDER BY timestamp
     """
 
-    df = read_dataframe(
-        query
-    )
-
+    df = read_dataframe(query)
 
     if df.empty:
         raise ValueError(
             "Database contains no data."
         )
 
-    # --------------------------------------------------------
-    # TIMESTAMP
-    # --------------------------------------------------------
-
+    # Timestamp conversion
     df["timestamp"] = pd.to_datetime(
         df["timestamp"],
         errors="coerce"
@@ -325,10 +279,7 @@ def load_database():
         subset=["timestamp"]
     )
 
-    # --------------------------------------------------------
-    # NUMERIC CONVERSION
-    # --------------------------------------------------------
-
+    # Numeric conversion
     for col in POLLUTANTS:
 
         df[col] = pd.to_numeric(
@@ -336,10 +287,7 @@ def load_database():
             errors="coerce"
         )
 
-    # --------------------------------------------------------
-    # REMOVE NEGATIVE VALUES
-    # --------------------------------------------------------
-
+    # Remove negative pollutant values
     for col in POLLUTANTS:
 
         df.loc[
@@ -347,10 +295,7 @@ def load_database():
             col
         ] = np.nan
 
-    # --------------------------------------------------------
-    # SORT / DUPLICATES
-    # --------------------------------------------------------
-
+    # Sort and remove duplicate timestamps
     df = (
         df
         .sort_values("timestamp")
@@ -361,20 +306,9 @@ def load_database():
         .reset_index(drop=True)
     )
 
-    print(
-        "Rows:",
-        len(df)
-    )
-
-    print(
-        "First timestamp:",
-        df["timestamp"].iloc[0]
-    )
-
-    print(
-        "Last timestamp:",
-        df["timestamp"].iloc[-1]
-    )
+    print("Rows:", len(df))
+    print("First timestamp:", df["timestamp"].iloc[0])
+    print("Last timestamp:", df["timestamp"].iloc[-1])
 
     print()
     print("Missing values:")
@@ -389,13 +323,7 @@ def load_database():
 
 
 # ============================================================
-# IMPUTE MISSING VALUES
-#
-# IMPORTANT:
-# This is for the live prediction pipeline.
-#
-# Historical database values are reconstructed using the
-# same general feature-preparation logic used during training.
+# IMPUTE MISSING DATA
 # ============================================================
 
 def impute_data(df):
@@ -474,13 +402,7 @@ def create_aqi(df):
             .mean()
         )
 
-    # --------------------------------------------------------
-    # AQI
-    # --------------------------------------------------------
-
-    print(
-        "Calculating CPCB AQI..."
-    )
+    print("Calculating CPCB AQI...")
 
     data["aqi"] = data.apply(
         calculate_cpcb_aqi,
@@ -496,11 +418,9 @@ def create_aqi(df):
 
 
 # ============================================================
-# CREATE FEATURES
+# CREATE 224 FEATURES
 #
-# MUST MATCH TRAINING CODE
-#
-# NO IS NOT USED ANYWHERE.
+# MUST MATCH TRAINING FEATURE ENGINEERING.
 # ============================================================
 
 def create_features(df):
@@ -518,9 +438,7 @@ def create_features(df):
     # AQI LAGS
     # ========================================================
 
-    print(
-        "Creating historical AQI lags..."
-    )
+    print("Creating historical AQI lags...")
 
     for lag in AQI_LAGS:
 
@@ -531,17 +449,13 @@ def create_features(df):
             .shift(lag)
         )
 
-        feature_columns.append(
-            name
-        )
+        feature_columns.append(name)
 
     # ========================================================
     # POLLUTANT LAGS
     # ========================================================
 
-    print(
-        "Creating pollutant lags..."
-    )
+    print("Creating pollutant lags...")
 
     for pollutant in POLLUTANTS:
 
@@ -556,23 +470,17 @@ def create_features(df):
                 .shift(lag)
             )
 
-            feature_columns.append(
-                name
-            )
+            feature_columns.append(name)
 
     # ========================================================
     # AQI ROLLING STATISTICS
     # ========================================================
 
-    print(
-        "Creating AQI rolling statistics..."
-    )
+    print("Creating AQI rolling statistics...")
 
     for window in ROLLING_WINDOWS:
 
-        prefix = (
-            f"aqi_roll_{window}h"
-        )
+        prefix = f"aqi_roll_{window}h"
 
         data[f"{prefix}_mean"] = (
             data["aqi"]
@@ -621,9 +529,7 @@ def create_features(df):
     # POLLUTANT ROLLING STATISTICS
     # ========================================================
 
-    print(
-        "Creating pollutant rolling statistics..."
-    )
+    print("Creating pollutant rolling statistics...")
 
     for pollutant in POLLUTANTS:
 
@@ -660,9 +566,7 @@ def create_features(df):
     # POLLUTANT CHANGE FEATURES
     # ========================================================
 
-    print(
-        "Creating pollutant change features..."
-    )
+    print("Creating pollutant change features...")
 
     for pollutant in POLLUTANTS:
 
@@ -678,17 +582,13 @@ def create_features(df):
                 data[pollutant].shift(lag)
             )
 
-            feature_columns.append(
-                name
-            )
+            feature_columns.append(name)
 
     # ========================================================
     # AQI CHANGE FEATURES
     # ========================================================
 
-    print(
-        "Creating AQI change features..."
-    )
+    print("Creating AQI change features...")
 
     for lag in CHANGE_LAGS:
 
@@ -702,17 +602,13 @@ def create_features(df):
             data["aqi"].shift(lag)
         )
 
-        feature_columns.append(
-            name
-        )
+        feature_columns.append(name)
 
     # ========================================================
     # POLLUTANT TREND FEATURES
     # ========================================================
 
-    print(
-        "Creating pollutant trend features..."
-    )
+    print("Creating pollutant trend features...")
 
     for pollutant in POLLUTANTS:
 
@@ -728,17 +624,13 @@ def create_features(df):
                 window
             )
 
-            feature_columns.append(
-                name
-            )
+            feature_columns.append(name)
 
     # ========================================================
     # AQI TREND FEATURES
     # ========================================================
 
-    print(
-        "Creating AQI trend features..."
-    )
+    print("Creating AQI trend features...")
 
     for window in TREND_WINDOWS:
 
@@ -752,17 +644,13 @@ def create_features(df):
             window
         )
 
-        feature_columns.append(
-            name
-        )
+        feature_columns.append(name)
 
     # ========================================================
     # POLLUTANT ACCELERATION
     # ========================================================
 
-    print(
-        "Creating pollutant acceleration features..."
-    )
+    print("Creating pollutant acceleration features...")
 
     for pollutant in POLLUTANTS:
 
@@ -784,17 +672,13 @@ def create_features(df):
             change_3h / 3
         )
 
-        feature_columns.append(
-            name
-        )
+        feature_columns.append(name)
 
     # ========================================================
     # AQI ACCELERATION
     # ========================================================
 
-    print(
-        "Creating AQI acceleration..."
-    )
+    print("Creating AQI acceleration...")
 
     aqi_change_1h = (
         data["aqi"].diff(1)
@@ -818,9 +702,7 @@ def create_features(df):
     # PM2.5 / PM10 RATIO
     # ========================================================
 
-    print(
-        "Creating pollutant ratio features..."
-    )
+    print("Creating pollutant ratio features...")
 
     data["pm25_pm10_ratio"] = (
         data["pm25"]
@@ -859,9 +741,7 @@ def create_features(df):
     # CYCLICAL TIME FEATURES
     # ========================================================
 
-    print(
-        "Creating cyclical time features..."
-    )
+    print("Creating cyclical time features...")
 
     hour = (
         data["timestamp"].dt.hour
@@ -875,69 +755,39 @@ def create_features(df):
         data["timestamp"].dt.dayofyear
     )
 
-    # --------------------------------------------------------
-    # Hour
-    # --------------------------------------------------------
-
     data["sin_hour"] = (
         np.sin(
-            2
-            * np.pi
-            * hour
-            / 24
+            2 * np.pi * hour / 24
         )
     )
 
     data["cos_hour"] = (
         np.cos(
-            2
-            * np.pi
-            * hour
-            / 24
+            2 * np.pi * hour / 24
         )
     )
 
-    # --------------------------------------------------------
-    # Day of week
-    # --------------------------------------------------------
-
     data["sin_day"] = (
         np.sin(
-            2
-            * np.pi
-            * day_of_week
-            / 7
+            2 * np.pi * day_of_week / 7
         )
     )
 
     data["cos_day"] = (
         np.cos(
-            2
-            * np.pi
-            * day_of_week
-            / 7
+            2 * np.pi * day_of_week / 7
         )
     )
 
-    # --------------------------------------------------------
-    # Day of year
-    # --------------------------------------------------------
-
     data["sin_year"] = (
         np.sin(
-            2
-            * np.pi
-            * day_of_year
-            / 365.25
+            2 * np.pi * day_of_year / 365.25
         )
     )
 
     data["cos_year"] = (
         np.cos(
-            2
-            * np.pi
-            * day_of_year
-            / 365.25
+            2 * np.pi * day_of_year / 365.25
         )
     )
 
@@ -987,220 +837,228 @@ def create_features(df):
         len(feature_columns)
     )
 
+    if len(feature_columns) != 224:
+
+        raise ValueError(
+            f"Generated {len(feature_columns)} features. "
+            f"Expected 224."
+        )
+
+    return data, feature_columns
+
+
+# ============================================================
+# GET RANDOM FOREST MODEL FILES
+#
+# IMPORTANT:
+# Only ONE RF model is loaded at a time.
+#
+# This prevents all 24 large RF models from being kept
+# in memory simultaneously.
+# ============================================================
+
+def get_model_files(horizon):
+
+    folder = os.path.join(
+        MODEL_BASE,
+        f"horizon_{horizon:02d}h"
+    )
+
+    model_path = os.path.join(
+        folder,
+        MODEL_FILENAME
+    )
+
+    feature_path = os.path.join(
+        folder,
+        "feature_columns.joblib"
+    )
+
+    config_path = os.path.join(
+        folder,
+        "model_config.joblib"
+    )
+
+    if not os.path.isdir(folder):
+
+        raise FileNotFoundError(
+            f"Random Forest model folder not found:\n"
+            f"{folder}"
+        )
+
+    if not os.path.exists(model_path):
+
+        raise FileNotFoundError(
+            f"Random Forest model not found:\n"
+            f"{model_path}"
+        )
+
+    if not os.path.exists(feature_path):
+
+        raise FileNotFoundError(
+            f"Feature list not found:\n"
+            f"{feature_path}"
+        )
+
+    feature_columns = joblib.load(
+        feature_path
+    )
+
+    if len(feature_columns) != 224:
+
+        raise ValueError(
+            f"Horizon {horizon:02d}h has "
+            f"{len(feature_columns)} model features. "
+            f"Expected 224."
+        )
+
+    config = None
+
+    if os.path.exists(config_path):
+
+        config = joblib.load(
+            config_path
+        )
+
     return (
-        data,
-        feature_columns
+        model_path,
+        feature_columns,
+        config
     )
 
 
 # ============================================================
-# LOAD ALL MODELS
-# ============================================================
-
-def load_models():
-
-    models = {}
-
-    print()
-    print("=" * 80)
-    print("LOADING XGBOOST DELTA-ONLY MODELS")
-    print("=" * 80)
-
-    for horizon in range(1, 25):
-
-        folder = os.path.join(
-            MODEL_BASE,
-            f"horizon_{horizon:02d}h"
-        )
-
-        model_path = os.path.join(
-            folder,
-            "xgboost_delta_model.joblib"
-        )
-
-        feature_path = os.path.join(
-            folder,
-            "feature_columns.joblib"
-        )
-
-        config_path = os.path.join(
-            folder,
-            "model_config.joblib"
-        )
-
-        # ----------------------------------------------------
-        # CHECK FILES
-        # ----------------------------------------------------
-
-        if not os.path.exists(
-            model_path
-        ):
-
-            raise FileNotFoundError(
-                f"Model not found:\n{model_path}"
-            )
-
-        if not os.path.exists(
-            feature_path
-        ):
-
-            raise FileNotFoundError(
-                f"Feature list not found:\n{feature_path}"
-            )
-
-        # ----------------------------------------------------
-        # LOAD
-        # ----------------------------------------------------
-
-        model = joblib.load(
-            model_path
-        )
-
-        feature_columns = joblib.load(
-            feature_path
-        )
-
-        config = None
-
-        if os.path.exists(
-            config_path
-        ):
-
-            config = joblib.load(
-                config_path
-            )
-
-        models[horizon] = {
-            "model": model,
-            "features": feature_columns,
-            "config": config
-        }
-
-        print(
-            f"Horizon {horizon:02d}h: "
-            f"{len(feature_columns)} features loaded"
-        )
-
-        # ----------------------------------------------------
-        # EXPECTED FEATURE COUNT
-        # ----------------------------------------------------
-
-        if len(feature_columns) != 224:
-
-            raise ValueError(
-                f"Horizon {horizon:02d}h model has "
-                f"{len(feature_columns)} features. "
-                f"Expected 224."
-            )
-
-    return models
-
-
-# ============================================================
-# VALIDATE FEATURES
+# VALIDATE MODEL FEATURES
 # ============================================================
 
 def validate_model_features(
+    horizon,
     available_features,
-    models
+    model_features
 ):
-
-    print()
-    print("=" * 80)
-    print("VALIDATING MODEL FEATURES")
-    print("=" * 80)
 
     available_set = set(
         available_features
     )
 
-    for horizon in range(1, 25):
+    model_set = set(
+        model_features
+    )
 
-        model_features = models[horizon][
-            "features"
-        ]
+    missing = (
+        model_set
+        -
+        available_set
+    )
 
-        model_set = set(
-            model_features
+    extra = (
+        available_set
+        -
+        model_set
+    )
+
+    if missing:
+
+        raise ValueError(
+            f"Horizon {horizon:02d}h requires "
+            f"features that were not generated:\n"
+            f"{sorted(missing)}"
         )
 
-        missing = (
-            model_set
-            -
-            available_set
+    if extra:
+
+        raise ValueError(
+            f"Horizon {horizon:02d}h generated "
+            f"unexpected features:\n"
+            f"{sorted(extra)}"
         )
 
-        extra = (
-            available_set
-            -
-            model_set
+    if len(model_features) != 224:
+
+        raise ValueError(
+            f"Horizon {horizon:02d}h expected "
+            f"224 model features but found "
+            f"{len(model_features)}."
         )
 
-        if missing:
 
-            raise ValueError(
-                f"\nHorizon {horizon:02d}h "
-                f"is missing features:\n"
-                f"{sorted(missing)}"
-            )
+# ============================================================
+# DISPLAY DEPLOYMENT CONFIGURATION
+# ============================================================
 
-        if len(model_features) != len(
-            available_features
-        ):
-
-            print(
-                f"Warning: horizon {horizon:02d}h "
-                f"feature count differs from generated "
-                f"features."
-            )
-
-        print(
-            f"Horizon {horizon:02d}h: "
-            f"feature validation OK"
-        )
+def display_model_configuration():
 
     print()
+    print("=" * 80)
+    print("RANDOM FOREST DEPLOYMENT CONFIGURATION")
+    print("=" * 80)
+
     print(
-        "All model feature lists validated."
+        "Model base:",
+        os.path.abspath(MODEL_BASE)
+    )
+
+    print(
+        "Model filename:",
+        MODEL_FILENAME
+    )
+
+    print(
+        "Model type:",
+        "Random Forest Delta-only"
+    )
+
+    print(
+        "Forecast horizons:",
+        "1-24 hours"
+    )
+
+    print(
+        "Expected features:",
+        224
     )
 
 
 # ============================================================
-# PREDICT
+# MAKE PREDICTIONS
 # ============================================================
 
 def make_predictions():
 
-    # ========================================================
+    # --------------------------------------------------------
+    # DISPLAY MODEL CONFIGURATION
+    # --------------------------------------------------------
+
+    display_model_configuration()
+
+    # --------------------------------------------------------
     # LOAD DATABASE
-    # ========================================================
+    # --------------------------------------------------------
 
     df = load_database()
 
-    # ========================================================
-    # IMPUTE
-    # ========================================================
+    # --------------------------------------------------------
+    # IMPUTE MISSING DATA
+    # --------------------------------------------------------
 
     print()
-    print(
-        "Imputing missing pollutant values..."
-    )
+    print("Imputing missing pollutant values...")
 
     df = impute_data(
         df
     )
 
-    # ========================================================
-    # CREATE CPCB AQI
-    # ========================================================
+    # --------------------------------------------------------
+    # CALCULATE AQI
+    # --------------------------------------------------------
 
     df = create_aqi(
         df
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # CREATE FEATURES
-    # ========================================================
+    # --------------------------------------------------------
 
     data, available_features = (
         create_features(
@@ -1208,24 +1066,9 @@ def make_predictions():
         )
     )
 
-    # ========================================================
-    # LOAD MODELS
-    # ========================================================
-
-    models = load_models()
-
-    # ========================================================
-    # VALIDATE FEATURES
-    # ========================================================
-
-    validate_model_features(
-        available_features,
-        models
-    )
-
-    # ========================================================
-    # LAST VALID AQI ROW
-    # ========================================================
+    # --------------------------------------------------------
+    # GET LAST VALID AQI ROW
+    # --------------------------------------------------------
 
     valid_rows = data.dropna(
         subset=["aqi"]
@@ -1249,23 +1092,58 @@ def make_predictions():
         latest["aqi"]
     )
 
-    # ========================================================
-    # FORECAST ORIGIN
-    # ========================================================
+    # --------------------------------------------------------
+    # DISPLAY CURRENT INPUT
+    # --------------------------------------------------------
 
     print()
     print("=" * 80)
     print("LATEST INPUT POLLUTANTS")
     print("=" * 80)
 
-    print("Timestamp:", latest_timestamp)
-    print("PM2.5:", latest["pm25"])
-    print("PM10 :", latest["pm10"])
-    print("CO   :", latest["co"])
-    print("NH3  :", latest["nh3"])
-    print("NO2  :", latest["no2"])
-    print("SO2  :", latest["so2"])
-    print("O3   :", latest["o3"])
+    print(
+        "Timestamp:",
+        latest_timestamp
+    )
+
+    print(
+        "PM2.5:",
+        latest["pm25"]
+    )
+
+    print(
+        "PM10 :",
+        latest["pm10"]
+    )
+
+    print(
+        "CO   :",
+        latest["co"]
+    )
+
+    print(
+        "NH3  :",
+        latest["nh3"]
+    )
+
+    print(
+        "NO2  :",
+        latest["no2"]
+    )
+
+    print(
+        "SO2  :",
+        latest["so2"]
+    )
+
+    print(
+        "O3   :",
+        latest["o3"]
+    )
+
+    # --------------------------------------------------------
+    # FORECAST ORIGIN
+    # --------------------------------------------------------
 
     print()
     print("=" * 80)
@@ -1290,22 +1168,22 @@ def make_predictions():
         len(available_features)
     )
 
-    # ========================================================
-    # CHECK CURRENT ROW
-    # ========================================================
+    # --------------------------------------------------------
+    # CURRENT FEATURE NaN CHECK
+    # --------------------------------------------------------
 
-    if latest[
-        available_features
-    ].isna().any():
+    current_features = (
+        latest[
+            available_features
+        ]
+    )
+
+    if current_features.isna().any():
 
         nan_features = (
-            latest[
-                available_features
-            ]
+            current_features
             .index[
-                latest[
-                    available_features
-                ].isna()
+                current_features.isna()
             ]
             .tolist()
         )
@@ -1316,23 +1194,23 @@ def make_predictions():
         print("=" * 80)
 
         for feature in nan_features:
-            print(
-                feature
-            )
+            print(feature)
 
         raise ValueError(
             "Current forecast row contains NaN features."
         )
 
-    # ========================================================
-    # PREDICT ALL 24 HORIZONS
-    # ========================================================
+    # --------------------------------------------------------
+    # GENERATE 24 FORECASTS
+    # --------------------------------------------------------
 
     results = []
 
     print()
     print("=" * 80)
-    print("GENERATING 1–24 HOUR DELTA FORECAST")
+    print(
+        "GENERATING 1-24 HOUR RANDOM FOREST DELTA FORECAST"
+    )
     print("=" * 80)
 
     for horizon in range(
@@ -1340,34 +1218,42 @@ def make_predictions():
         25
     ):
 
-        model = models[horizon][
-            "model"
-        ]
-
-        feature_columns = models[horizon][
-            "features"
-        ]
+        print()
+        print(
+            f"[{horizon:02d}/24] "
+            f"Preparing Random Forest horizon..."
+        )
 
         # ----------------------------------------------------
-        # CHECK FEATURES
+        # GET MODEL INFORMATION
         # ----------------------------------------------------
 
-        missing_features = [
-            col
-            for col in feature_columns
-            if col not in data.columns
-        ]
-
-        if missing_features:
-
-            raise ValueError(
-                f"Missing features for "
-                f"{horizon}h:\n"
-                f"{missing_features}"
-            )
+        (
+            model_path,
+            feature_columns,
+            config
+        ) = get_model_files(
+            horizon
+        )
 
         # ----------------------------------------------------
-        # MODEL INPUT
+        # VALIDATE FEATURES
+        # ----------------------------------------------------
+
+        validate_model_features(
+            horizon,
+            available_features,
+            feature_columns
+        )
+
+        print(
+            f"[{horizon:02d}/24] "
+            f"Feature validation OK "
+            f"({len(feature_columns)} features)"
+        )
+
+        # ----------------------------------------------------
+        # CREATE INPUT IN EXACT TRAINING FEATURE ORDER
         # ----------------------------------------------------
 
         X = (
@@ -1376,14 +1262,11 @@ def make_predictions():
             ]
             .to_frame()
             .T
-        )
-
-        X = X.astype(
-            np.float32
+            .astype(np.float32)
         )
 
         # ----------------------------------------------------
-        # NaN CHECK
+        # INPUT VALIDATION
         # ----------------------------------------------------
 
         if X.isna().any().any():
@@ -1396,9 +1279,51 @@ def make_predictions():
             )
 
             raise ValueError(
-                f"NaN feature found for "
-                f"{horizon}h model:\n"
+                f"NaN features found for "
+                f"horizon {horizon:02d}h:\n"
                 f"{nan_features}"
+            )
+
+        if np.isinf(
+            X.to_numpy()
+        ).any():
+
+            raise ValueError(
+                f"Infinite feature value found for "
+                f"horizon {horizon:02d}h."
+            )
+
+        # ----------------------------------------------------
+        # LOAD ONLY CURRENT RANDOM FOREST
+        # ----------------------------------------------------
+
+        print(
+            f"[{horizon:02d}/24] "
+            f"Loading Random Forest..."
+        )
+
+        model = joblib.load(
+            model_path
+        )
+
+        model_name = (
+            type(model).__name__
+        )
+
+        print(
+            f"[{horizon:02d}/24] "
+            f"Loaded: {model_name}"
+        )
+
+        # ----------------------------------------------------
+        # VERIFY MODEL TYPE
+        # ----------------------------------------------------
+
+        if model_name != "RandomForestRegressor":
+
+            print(
+                f"WARNING: Horizon {horizon:02d}h "
+                f"loaded model type is {model_name}"
             )
 
         # ----------------------------------------------------
@@ -1412,10 +1337,15 @@ def make_predictions():
         )
 
         # ----------------------------------------------------
-        # DELTA → AQI
-        #
-        # Future AQI =
-        # Current AQI + Predicted Delta
+        # RELEASE LARGE MODEL IMMEDIATELY
+        # ----------------------------------------------------
+
+        del model
+
+        gc.collect()
+
+        # ----------------------------------------------------
+        # DELTA -> FINAL AQI
         # ----------------------------------------------------
 
         predicted_aqi = (
@@ -1423,10 +1353,6 @@ def make_predictions():
             +
             predicted_delta
         )
-
-        # ----------------------------------------------------
-        # CPCB AQI RANGE
-        # ----------------------------------------------------
 
         predicted_aqi = float(
             np.clip(
@@ -1480,38 +1406,79 @@ def make_predictions():
             f"Predicted AQI = {predicted_aqi:8.3f}"
         )
 
-    # ========================================================
-    # RESULTS DATAFRAME
-    # ========================================================
+    # --------------------------------------------------------
+    # CREATE RESULTS DATAFRAME
+    # --------------------------------------------------------
 
     results_df = pd.DataFrame(
         results
     )
 
-    # ========================================================
-    # SAVE
-    # ========================================================
+    # --------------------------------------------------------
+    # VERIFY 24 FORECASTS
+    # --------------------------------------------------------
+
+    if len(results_df) != 24:
+
+        raise ValueError(
+            f"Expected 24 forecast rows, "
+            f"but generated {len(results_df)}."
+        )
+
+    # --------------------------------------------------------
+    # SAVE LOCAL CSV
+    # --------------------------------------------------------
 
     results_df.to_csv(
         OUTPUT_FILE,
         index=False
     )
 
-        # ========================================================
-    # SAVE TO POSTGRESQL
-    # ========================================================
-
-    save_predictions_to_postgres(
-        results_df
+    print()
+    print(
+        "Local prediction CSV saved successfully."
     )
 
-    # ========================================================
-    # DISPLAY
-    # ========================================================
+    # --------------------------------------------------------
+    # SAVE TO POSTGRESQL
+    # --------------------------------------------------------
+
+    try:
+
+        save_predictions_to_postgres(
+            results_df
+        )
+
+        print(
+            "PostgreSQL prediction save step completed."
+        )
+
+    except Exception as exc:
+
+        print()
+        print(
+            "WARNING: PostgreSQL prediction save failed."
+        )
+
+        print(
+            "Reason:",
+            exc
+        )
+
+        print(
+            "The Random Forest forecasts were still "
+            "generated and saved locally."
+        )
+
+    # --------------------------------------------------------
+    # DISPLAY RESULTS
+    # --------------------------------------------------------
 
     print()
     print("=" * 80)
-    print("VADODARA 24-HOUR AQI FORECAST")
+    print(
+        "VADODARA RANDOM FOREST 24-HOUR AQI FORECAST"
+    )
     print("=" * 80)
 
     print(
@@ -1520,9 +1487,9 @@ def make_predictions():
         )
     )
 
-    # ========================================================
-    # SAVE CONFIRMATION
-    # ========================================================
+    # --------------------------------------------------------
+    # FINAL CONFIRMATION
+    # --------------------------------------------------------
 
     print()
     print("=" * 80)
@@ -1530,9 +1497,27 @@ def make_predictions():
     print("=" * 80)
 
     print(
+        "CSV:",
         os.path.abspath(
             OUTPUT_FILE
         )
+    )
+
+    print(
+        "Model base:",
+        os.path.abspath(
+            MODEL_BASE
+        )
+    )
+
+    print(
+        "Model filename:",
+        MODEL_FILENAME
+    )
+
+    print()
+    print(
+        "24 Random Forest forecasts generated successfully."
     )
 
     return results_df

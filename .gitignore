@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Environment / secrets
+.env
+
+# Random Forest large model artifacts
+RF_Deployment/
+RF_Deployment.zip
+models/Vadodara/Random Forest/
+
+# Generated prediction output
+vadodara_live_predictions.csv
+
+# Local backup
+predictor_xgboost_backup.py
+
+# Local XGBoost backup
+models/Vadodara/XGBoost/
+.github/workflows/cpcb_hourly_backup.yml.txt
