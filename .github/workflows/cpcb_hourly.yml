@@ -1,9 +1,6 @@
 name: CPCB Automatic Update
 
 on:
-  schedule:
-    - cron: "15,45 * * * *"
-
   workflow_dispatch:
 
 concurrency:
