@@ -33,6 +33,12 @@ jobs:
 
       # ======================================================
       # CHECK CPCB FIRST
+      #
+      # Exit codes from cpcb_collector.py:
+      #
+      #   0  = API succeeded, no new CPCB timestamp
+      #   10 = API succeeded, new CPCB timestamp found
+      #   20 = CPCB API unavailable / timeout
       # ======================================================
 
       - name: Check for new CPCB data
@@ -54,16 +60,31 @@ jobs:
           if [ "$EXIT_CODE" -eq 10 ]; then
 
             echo "New CPCB hour detected."
+
             echo "new_data=true" >> "$GITHUB_OUTPUT"
+            echo "api_available=true" >> "$GITHUB_OUTPUT"
 
           elif [ "$EXIT_CODE" -eq 0 ]; then
 
+            echo "CPCB API checked successfully."
             echo "No new CPCB hour."
+
             echo "new_data=false" >> "$GITHUB_OUTPUT"
+            echo "api_available=true" >> "$GITHUB_OUTPUT"
+
+          elif [ "$EXIT_CODE" -eq 20 ]; then
+
+            echo "WARNING: CPCB API is currently unavailable."
+            echo "Existing database and forecast will be retained."
+
+            echo "new_data=false" >> "$GITHUB_OUTPUT"
+            echo "api_available=false" >> "$GITHUB_OUTPUT"
 
           else
 
-            echo "CPCB collector failed."
+            echo "Unexpected CPCB collector failure."
+            echo "Exit code: $EXIT_CODE"
+
             exit "$EXIT_CODE"
 
           fi
@@ -71,7 +92,7 @@ jobs:
       # ======================================================
       # RF MODEL CACHE
       #
-      # Only runs when new CPCB data exists.
+      # Only runs when a genuinely newer CPCB timestamp exists.
       # ======================================================
 
       - name: Restore Random Forest model cache
@@ -83,7 +104,9 @@ jobs:
           key: vadodara-rf-models-v1
 
       # ======================================================
-      # DOWNLOAD ONLY IF:
+      # DOWNLOAD RF MODELS
+      #
+      # Only when:
       # 1. New CPCB data exists
       # 2. RF cache is unavailable
       # ======================================================
@@ -99,7 +122,12 @@ jobs:
           gdown "https://drive.google.com/uc?id=1K1VMc4iyp7_9PFy2JenPXawA81cnWf1v" \
             -O RF_Deployment.zip
 
+          echo "Downloaded RF package:"
           ls -lh RF_Deployment.zip
+
+      # ======================================================
+      # EXTRACT RF MODELS
+      # ======================================================
 
       - name: Extract Random Forest models
         if: >
@@ -109,6 +137,8 @@ jobs:
           echo "Extracting Random Forest models..."
 
           unzip -q RF_Deployment.zip
+
+          echo "Extraction completed."
 
           du -sh RF_Deployment
 
@@ -137,6 +167,8 @@ jobs:
 
       # ======================================================
       # GENERATE NEW RF FORECAST
+      #
+      # Only runs when new CPCB data was successfully obtained.
       # ======================================================
 
       - name: Generate Random Forest forecast
@@ -160,14 +192,46 @@ jobs:
           echo "=========================================="
 
       # ======================================================
-      # NOTHING NEW
+      # API WORKED BUT THERE IS NO NEW CPCB HOUR
       # ======================================================
 
       - name: No new CPCB data
-        if: steps.cpcb-check.outputs.new_data == 'false'
+        if: >
+          steps.cpcb-check.outputs.api_available == 'true' &&
+          steps.cpcb-check.outputs.new_data == 'false'
         run: |
           echo "=========================================="
           echo "NO NEW CPCB HOUR"
+          echo "=========================================="
+          echo ""
+          echo "CPCB API was checked successfully."
+          echo "The latest CPCB timestamp has not changed."
+          echo ""
+          echo "Existing database retained."
           echo "Existing prediction retained."
           echo "Random Forest models were not restored."
+          echo ""
+          echo "=========================================="
+
+      # ======================================================
+      # CPCB API COULD NOT BE CHECKED
+      # ======================================================
+
+      - name: CPCB API unavailable
+        if: steps.cpcb-check.outputs.api_available == 'false'
+        run: |
+          echo "=========================================="
+          echo "CPCB API TEMPORARILY UNAVAILABLE"
+          echo "=========================================="
+          echo ""
+          echo "The CPCB API could not be checked successfully."
+          echo ""
+          echo "This does NOT mean that there is no new CPCB data."
+          echo ""
+          echo "Existing PostgreSQL data retained."
+          echo "Existing Random Forest forecast retained."
+          echo "RF models were not restored."
+          echo ""
+          echo "The next scheduled check will try again."
+          echo ""
           echo "=========================================="
