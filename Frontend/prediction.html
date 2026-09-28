@@ -467,6 +467,36 @@ tbody tr:hover {
     <div class="page-header">
       <h1>Vadodara 24-Hour AQI Prediction</h1>
       <div id="liveClock" class="live-clock">—</div>
+      <script>
+      (function () {
+        function renderHeaderClock() {
+          var el = document.getElementById("liveClock");
+          if (!el) return;
+          var now = new Date();
+          var timeText = now.toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: true
+          });
+          var dateText = now.toLocaleDateString("en-US", {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+            year: "numeric"
+          });
+          el.innerHTML = '<span class="clock-time">' + timeText + '</span>' +
+                         '<span class="clock-date">' + dateText + '</span>';
+        }
+
+        renderHeaderClock();
+        window.setInterval(renderHeaderClock, 1000);
+        document.addEventListener("visibilitychange", function () {
+          if (!document.hidden) renderHeaderClock();
+        });
+        window.addEventListener("focus", renderHeaderClock);
+      })();
+      </script>
     </div>
 
     <button
@@ -766,57 +796,6 @@ themeToggle.addEventListener(
 );
 
 applySavedTheme();
-
-/* ============================================================
-   LIVE CURRENT TIME
-============================================================ */
-
-let clockTimer = null;
-
-function updateLiveClock() {
-  const clock = document.getElementById("liveClock");
-  if (!clock) return;
-
-  const now = new Date();
-
-  const timeText = now.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true
-  });
-
-  const dateText = now.toLocaleDateString("en-US", {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric"
-  });
-
-  clock.innerHTML =
-    '<span class="clock-time">' + timeText + '</span>' +
-    '<span class="clock-date">' + dateText + '</span>';
-}
-
-function startLiveClock() {
-  if (clockTimer !== null) {
-    clearInterval(clockTimer);
-  }
-
-  updateLiveClock();
-  clockTimer = setInterval(updateLiveClock, 1000);
-}
-
-startLiveClock();
-
-// Re-sync immediately after returning to the tab/window.
-document.addEventListener("visibilitychange", function() {
-  if (!document.hidden) {
-    updateLiveClock();
-  }
-});
-
-window.addEventListener("focus", updateLiveClock);
 
 /* ============================================================
    AQI CATEGORY
