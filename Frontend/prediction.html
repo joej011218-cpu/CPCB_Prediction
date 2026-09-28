@@ -771,37 +771,52 @@ applySavedTheme();
    LIVE CURRENT TIME
 ============================================================ */
 
+let clockTimer = null;
+
 function updateLiveClock() {
+  const clock = document.getElementById("liveClock");
+  if (!clock) return;
+
   const now = new Date();
 
-  const timeText = now.toLocaleTimeString(
-    undefined,
-    {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit"
-    }
-  );
+  const timeText = now.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true
+  });
 
-  const dateText = now.toLocaleDateString(
-    undefined,
-    {
-      weekday: "short",
-      year: "numeric",
-      month: "short",
-      day: "numeric"
-    }
-  );
+  const dateText = now.toLocaleDateString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
 
-  document.getElementById("liveClock").innerHTML =
-    timeText +
-    '<span class="clock-date">' +
-    dateText +
-    '</span>';
+  clock.innerHTML =
+    '<span class="clock-time">' + timeText + '</span>' +
+    '<span class="clock-date">' + dateText + '</span>';
 }
 
-updateLiveClock();
-setInterval(updateLiveClock, 1000);
+function startLiveClock() {
+  if (clockTimer !== null) {
+    clearInterval(clockTimer);
+  }
+
+  updateLiveClock();
+  clockTimer = setInterval(updateLiveClock, 1000);
+}
+
+startLiveClock();
+
+// Re-sync immediately after returning to the tab/window.
+document.addEventListener("visibilitychange", function() {
+  if (!document.hidden) {
+    updateLiveClock();
+  }
+});
+
+window.addEventListener("focus", updateLiveClock);
 
 /* ============================================================
    AQI CATEGORY
