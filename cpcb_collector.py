@@ -1,11 +1,11 @@
 import os
+import sys
 import time
 import subprocess
-import sys
+from enum import Enum
 
-import requests
 import pandas as pd
-
+import requests
 from dotenv import load_dotenv
 
 from database import (
@@ -21,13 +21,11 @@ from database import (
 # PATHS
 # ============================================================
 
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 ENV_PATH = os.path.join(
     BASE_DIR,
-    ".env"
+    ".env",
 )
 
 load_dotenv(ENV_PATH)
@@ -35,12 +33,12 @@ load_dotenv(ENV_PATH)
 DATABASE_PATH = os.path.join(
     BASE_DIR,
     "data",
-    "cpcb_vadodara.db"
+    "cpcb_vadodara.db",
 )
 
 PREDICTOR_PATH = os.path.join(
     BASE_DIR,
-    "predictor.py"
+    "predictor.py",
 )
 
 
@@ -55,15 +53,25 @@ API_URL = (
 
 API_KEY = os.getenv(
     "CPCB_API_KEY",
-    ""
+    "",
 )
 
+# Local continuous mode only.
 CHECK_INTERVAL = 60
-API_TIMEOUT = 60
+
+# A shorter timeout is better for GitHub Actions.
+# The API sometimes becomes slow/unavailable.
+API_TIMEOUT = 30
+
 MAX_RETRIES = 3
 
-# Empty responses can be temporary, so wait before trying again.
-RETRY_DELAY = 20
+# Increasing delay between retries:
+# attempt 1 -> 15 sec
+# attempt 2 -> 30 sec
+RETRY_DELAYS = [
+    15,
+    30,
+]
 
 API_LIMIT = 100
 
@@ -117,6 +125,20 @@ POLLUTANT_NAME_MAP = {
 
 
 # ============================================================
+# COLLECTION RESULT
+# ============================================================
+
+class CollectionStatus(Enum):
+    NEW_DATA = "new_data"
+    NO_NEW_DATA = "no_new_data"
+    API_UNAVAILABLE = "api_unavailable"
+
+
+class CPCBAPIUnavailable(Exception):
+    """Raised when CPCB could not be contacted successfully."""
+
+
+# ============================================================
 # DATABASE INITIALIZATION
 # ============================================================
 
@@ -136,7 +158,6 @@ def initialize_database():
     conn = get_connection()
 
     try:
-
         cursor = conn.cursor()
 
         cursor.execute(
@@ -161,20 +182,30 @@ def initialize_database():
         conn.close()
 
     if using_postgres():
-
-        print(
-            "Database ready: PostgreSQL"
-        )
-
+        print("Database ready: PostgreSQL")
     else:
+        print("Database ready:")
+        print(DATABASE_PATH)
 
-        print(
-            "Database ready:"
-        )
 
-        print(
-            DATABASE_PATH
-        )
+# ============================================================
+# RETRY HELPER
+# ============================================================
+
+def wait_before_retry(attempt):
+
+    index = min(
+        attempt - 1,
+        len(RETRY_DELAYS) - 1,
+    )
+
+    delay = RETRY_DELAYS[index]
+
+    print(
+        f"Retrying in {delay} seconds..."
+    )
+
+    time.sleep(delay)
 
 
 # ============================================================
@@ -190,13 +221,9 @@ def fetch_cpcb_data():
 
     if not API_KEY:
 
-        print()
-        print(
-            "ERROR: CPCB_API_KEY environment variable "
-            "is not configured."
+        raise CPCBAPIUnavailable(
+            "CPCB_API_KEY environment variable is not configured."
         )
-
-        return None
 
     session = requests.Session()
 
@@ -204,23 +231,26 @@ def fetch_cpcb_data():
         {
             "User-Agent": (
                 "Mozilla/5.0 "
-                "(Macintosh; Intel Mac OS X 10_15_7) "
+                "(X11; Linux x86_64) "
                 "AppleWebKit/537.36 "
                 "(KHTML, like Gecko) "
                 "Chrome/151.0 Safari/537.36"
             ),
             "Accept": "application/json",
+            "Connection": "close",
         }
     )
 
     api_params = get_api_params()
 
-    for attempt in range(
-        1,
-        MAX_RETRIES + 1
-    ):
+    last_error = None
 
-        try:
+    try:
+
+        for attempt in range(
+            1,
+            MAX_RETRIES + 1,
+        ):
 
             print()
             print(
@@ -228,358 +258,304 @@ def fetch_cpcb_data():
                 f"{attempt}/{MAX_RETRIES}"
             )
 
-            response = session.get(
-                API_URL,
-                params=api_params,
-                timeout=API_TIMEOUT,
-            )
+            try:
 
-            print(
-                "HTTP Status:",
-                response.status_code
-            )
+                response = session.get(
+                    API_URL,
+                    params=api_params,
+                    timeout=API_TIMEOUT,
+                )
 
-            # =================================================
-            # HTTP 200
-            # =================================================
+                print(
+                    "HTTP Status:",
+                    response.status_code,
+                )
 
-            if response.status_code == 200:
+                # =================================================
+                # HTTP 200
+                # =================================================
 
-                try:
+                if response.status_code == 200:
 
-                    result = response.json()
+                    try:
+                        result = response.json()
 
-                except ValueError:
+                    except ValueError as e:
 
-                    print()
-                    print(
-                        "ERROR: CPCB returned invalid JSON."
-                    )
+                        last_error = (
+                            "CPCB returned HTTP 200 "
+                            "but the response was not valid JSON."
+                        )
 
-                    if attempt < MAX_RETRIES:
-
+                        print()
                         print(
-                            f"Retrying in "
-                            f"{RETRY_DELAY} seconds..."
+                            "WARNING:",
+                            last_error,
                         )
 
-                        time.sleep(
-                            RETRY_DELAY
-                        )
-
-                        continue
-
-                    return None
-
-                records = result.get(
-                    "records",
-                    []
-                )
-
-                if records is None:
-                    records = []
-
-                print()
-                print(
-                    "API response total:",
-                    result.get("total")
-                )
-
-                print(
-                    "API response count:",
-                    result.get("count")
-                )
-
-                print(
-                    "Records received:",
-                    len(records)
-                )
-
-                # =============================================
-                # HTTP 200 + ZERO RECORDS
-                # =============================================
-
-                if not records:
-
-                    print()
-                    print(
-                        "WARNING: CPCB API returned "
-                        "zero records."
-                    )
-
-                    if attempt < MAX_RETRIES:
-
-                        print(
-                            f"Retrying empty CPCB response "
-                            f"in {RETRY_DELAY} seconds..."
-                        )
-
-                        time.sleep(
-                            RETRY_DELAY
-                        )
-
-                        continue
-
-                    print()
-                    print("=" * 70)
-                    print(
-                        "CPCB API RETURNED NO DATA"
-                    )
-                    print("=" * 70)
-
-                    print(
-                        f"Zero records returned after "
-                        f"{MAX_RETRIES} attempts."
-                    )
-
-                    return None
-
-                # =============================================
-                # PRINT ONE CO RECORD FOR DIAGNOSTICS
-                # =============================================
-
-                print()
-                print("=" * 70)
-                print("RAW CPCB CO RECORD")
-                print("=" * 70)
-
-                co_record_found = False
-
-                for record in records:
-
-                    pollutant_id = str(
-                        record.get(
-                            "pollutant_id",
-                            ""
-                        )
-                    ).strip().upper()
-
-                    if pollutant_id == "CO":
-
-                        print(record)
-
-                        co_record_found = True
+                        if attempt < MAX_RETRIES:
+                            wait_before_retry(attempt)
+                            continue
 
                         break
 
-                if not co_record_found:
-
-                    print(
-                        "No CO record found in this response."
+                    records = result.get(
+                        "records",
+                        [],
                     )
 
-                # =============================================
-                # SHOW TIMESTAMP RANGE
-                # =============================================
-
-                timestamps = []
-
-                for record in records:
-
-                    timestamp_value = (
-                        record.get("last_update")
-                        or record.get("timestamp")
-                        or record.get("datetime")
-                    )
-
-                    if timestamp_value:
-
-                        parsed = pd.to_datetime(
-                            timestamp_value,
-                            errors="coerce",
-                            dayfirst=True,
-                        )
-
-                        if not pd.isna(parsed):
-
-                            timestamps.append(
-                                parsed
-                            )
-
-                if timestamps:
+                    if records is None:
+                        records = []
 
                     print()
                     print(
-                        "Oldest timestamp in API response:",
-                        min(timestamps)
+                        "API response total:",
+                        result.get("total"),
                     )
 
                     print(
-                        "Newest timestamp in API response:",
-                        max(timestamps)
+                        "API response count:",
+                        result.get("count"),
                     )
 
+                    print(
+                        "Records received:",
+                        len(records),
+                    )
+
+                    # =================================================
+                    # HTTP 200 BUT EMPTY RESPONSE
+                    # =================================================
+
+                    if not records:
+
+                        last_error = (
+                            "CPCB API returned HTTP 200 "
+                            "but zero records."
+                        )
+
+                        print()
+                        print(
+                            "WARNING:",
+                            last_error,
+                        )
+
+                        if attempt < MAX_RETRIES:
+                            wait_before_retry(attempt)
+                            continue
+
+                        break
+
+                    # =================================================
+                    # PRINT ONE CO RECORD
+                    # =================================================
+
+                    print()
+                    print("=" * 70)
+                    print("RAW CPCB CO RECORD")
+                    print("=" * 70)
+
+                    co_record_found = False
+
+                    for record in records:
+
+                        pollutant_id = str(
+                            record.get(
+                                "pollutant_id",
+                                "",
+                            )
+                        ).strip().upper()
+
+                        if pollutant_id == "CO":
+
+                            print(record)
+
+                            co_record_found = True
+                            break
+
+                    if not co_record_found:
+                        print(
+                            "No CO record found in this response."
+                        )
+
+                    # =================================================
+                    # SHOW API TIMESTAMP RANGE
+                    # =================================================
+
+                    timestamps = []
+
+                    for record in records:
+
+                        timestamp_value = (
+                            record.get("last_update")
+                            or record.get("timestamp")
+                            or record.get("datetime")
+                        )
+
+                        if timestamp_value:
+
+                            parsed = pd.to_datetime(
+                                timestamp_value,
+                                errors="coerce",
+                                dayfirst=True,
+                            )
+
+                            if not pd.isna(parsed):
+                                timestamps.append(parsed)
+
+                    if timestamps:
+
+                        print()
+                        print(
+                            "Oldest timestamp in API response:",
+                            min(timestamps),
+                        )
+
+                        print(
+                            "Newest timestamp in API response:",
+                            max(timestamps),
+                        )
+
+                    print()
+                    print(
+                        "CPCB API fetch successful."
+                    )
+
+                    return records
+
+                # =================================================
+                # TEMPORARY HTTP ERRORS
+                # =================================================
+
+                if response.status_code in (
+                    408,
+                    425,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504,
+                ):
+
+                    last_error = (
+                        "Temporary CPCB API HTTP error: "
+                        f"{response.status_code}"
+                    )
+
+                    print()
+                    print(last_error)
+
+                    if attempt < MAX_RETRIES:
+                        wait_before_retry(attempt)
+                        continue
+
+                    break
+
+                # =================================================
+                # PERMANENT / OTHER HTTP ERROR
+                # =================================================
+
+                last_error = (
+                    "CPCB API HTTP error "
+                    f"{response.status_code}: "
+                    f"{response.text[:300]}"
+                )
+
                 print()
-                print(
-                    "CPCB API fetch successful."
-                )
+                print(last_error)
 
-                return records
-
-            # =================================================
-            # TEMPORARY SERVER ERRORS
-            # =================================================
-
-            if response.status_code in (
-                429,
-                500,
-                502,
-                503,
-                504,
-            ):
-
-                print()
-                print(
-                    "Temporary CPCB API HTTP error:"
-                )
-
-                print(
-                    response.status_code
-                )
+                # Do not retry authentication/client errors.
+                if 400 <= response.status_code < 500:
+                    break
 
                 if attempt < MAX_RETRIES:
-
-                    print(
-                        f"Retrying in "
-                        f"{RETRY_DELAY} seconds..."
-                    )
-
-                    time.sleep(
-                        RETRY_DELAY
-                    )
-
+                    wait_before_retry(attempt)
                     continue
 
+                break
+
+            # =====================================================
+            # TIMEOUT
+            # =====================================================
+
+            except requests.exceptions.Timeout:
+
+                last_error = (
+                    f"CPCB API request timed out after "
+                    f"{API_TIMEOUT} seconds."
+                )
+
                 print()
-                print("=" * 70)
-                print("CPCB API FAILED")
-                print("=" * 70)
+                print(last_error)
 
-                return None
+                if attempt < MAX_RETRIES:
+                    wait_before_retry(attempt)
+                    continue
 
-            # =================================================
-            # OTHER HTTP ERROR
-            # =================================================
+                break
 
-            print()
-            print(
-                "CPCB API HTTP error:"
-            )
+            # =====================================================
+            # CONNECTION ERROR
+            # =====================================================
 
-            print(
-                "Status:",
-                response.status_code
-            )
+            except requests.exceptions.ConnectionError as e:
 
-            print(
-                response.text[:500]
-            )
-
-            return None
-
-        # =====================================================
-        # TIMEOUT
-        # =====================================================
-
-        except requests.exceptions.Timeout:
-
-            print()
-            print(
-                "CPCB API request timed out."
-            )
-
-            if attempt < MAX_RETRIES:
-
-                print(
-                    f"Retrying in "
-                    f"{RETRY_DELAY} seconds..."
+                last_error = (
+                    "CPCB connection error: "
+                    f"{e}"
                 )
 
-                time.sleep(
-                    RETRY_DELAY
+                print()
+                print(last_error)
+
+                if attempt < MAX_RETRIES:
+                    wait_before_retry(attempt)
+                    continue
+
+                break
+
+            # =====================================================
+            # OTHER REQUEST ERROR
+            # =====================================================
+
+            except requests.exceptions.RequestException as e:
+
+                last_error = (
+                    "CPCB request failed: "
+                    f"{e}"
                 )
 
-                continue
+                print()
+                print(last_error)
 
-            print()
-            print("=" * 70)
-            print("CPCB API FAILED")
-            print("=" * 70)
+                if attempt < MAX_RETRIES:
+                    wait_before_retry(attempt)
+                    continue
 
-            return None
+                break
 
-        # =====================================================
-        # CONNECTION ERROR
-        # =====================================================
+    finally:
 
-        except requests.exceptions.ConnectionError as e:
+        session.close()
 
-            print()
-            print(
-                "CPCB connection error:"
-            )
+    # ============================================================
+    # IMPORTANT:
+    # Reaching here means the API never produced usable data.
+    # This is NOT the same as "no new CPCB data".
+    # ============================================================
 
-            print(e)
+    print()
+    print("=" * 70)
+    print("CPCB API UNAVAILABLE")
+    print("=" * 70)
 
-            if attempt < MAX_RETRIES:
+    if last_error:
+        print(last_error)
 
-                print(
-                    f"Retrying in "
-                    f"{RETRY_DELAY} seconds..."
-                )
-
-                time.sleep(
-                    RETRY_DELAY
-                )
-
-                continue
-
-            return None
-
-        # =====================================================
-        # REQUEST ERROR
-        # =====================================================
-
-        except requests.exceptions.RequestException as e:
-
-            print()
-            print(
-                "CPCB request failed:"
-            )
-
-            print(e)
-
-            if attempt < MAX_RETRIES:
-
-                print(
-                    f"Retrying in "
-                    f"{RETRY_DELAY} seconds..."
-                )
-
-                time.sleep(
-                    RETRY_DELAY
-                )
-
-                continue
-
-            return None
-
-        # =====================================================
-        # UNEXPECTED ERROR
-        # =====================================================
-
-        except Exception as e:
-
-            print()
-            print(
-                "Unexpected API error:"
-            )
-
-            print(e)
-
-            return None
-
-    return None
+    raise CPCBAPIUnavailable(
+        last_error
+        or "CPCB API did not return usable data."
+    )
 
 
 # ============================================================
@@ -637,21 +613,14 @@ def convert_records_to_hourly(records):
     if not records:
         return None
 
-    df = pd.DataFrame(
-        records
-    )
+    df = pd.DataFrame(records)
 
     if df.empty:
         return None
 
     print()
-    print(
-        "CPCB columns received:"
-    )
-
-    print(
-        df.columns.tolist()
-    )
+    print("CPCB columns received:")
+    print(df.columns.tolist())
 
     # ========================================================
     # TIMESTAMP COLUMN
@@ -670,15 +639,13 @@ def convert_records_to_hourly(records):
         if column in df.columns:
 
             timestamp_column = column
-
             break
 
     if timestamp_column is None:
 
         print()
         print(
-            "ERROR: No CPCB timestamp "
-            "column found."
+            "ERROR: No CPCB timestamp column found."
         )
 
         return None
@@ -698,15 +665,13 @@ def convert_records_to_hourly(records):
         if column in df.columns:
 
             pollutant_column = column
-
             break
 
     if pollutant_column is None:
 
         print()
         print(
-            "ERROR: No pollutant_id "
-            "column found."
+            "ERROR: No pollutant_id column found."
         )
 
         return None
@@ -715,16 +680,13 @@ def convert_records_to_hourly(records):
     # VALUE COLUMN
     # ========================================================
 
-    value_column = find_value_column(
-        df
-    )
+    value_column = find_value_column(df)
 
     if value_column is None:
 
         print()
         print(
-            "ERROR: No pollutant value "
-            "column found."
+            "ERROR: No pollutant value column found."
         )
 
         print(
@@ -740,17 +702,17 @@ def convert_records_to_hourly(records):
     print()
     print(
         "Timestamp column:",
-        timestamp_column
+        timestamp_column,
     )
 
     print(
         "Pollutant column:",
-        pollutant_column
+        pollutant_column,
     )
 
     print(
         "Value column:",
-        value_column
+        value_column,
     )
 
     # ========================================================
@@ -781,21 +743,21 @@ def convert_records_to_hourly(records):
         errors="coerce",
     ).astype(float)
 
-    # Remove records with unknown pollutant names.
     data = data.dropna(
         subset=["pollutant"]
     )
 
     # ========================================================
-    # CPCB CO
+    # CPCB CO CONVERSION
     #
-    # CPCB API value:
-    # µg/m3
+    # CPCB API:
+    #     µg/m³
     #
-    # Model/database:
-    # mg/m3
+    # Database/model:
+    #     mg/m³
     #
-    # Therefore divide by 1000.
+    # Therefore:
+    #     divide by 1000
     # ========================================================
 
     co_mask = (
@@ -804,11 +766,11 @@ def convert_records_to_hourly(records):
 
     data.loc[
         co_mask,
-        "value"
+        "value",
     ] = (
         data.loc[
             co_mask,
-            "value"
+            "value",
         ]
         / 1000.0
     )
@@ -857,13 +819,12 @@ def convert_records_to_hourly(records):
     hourly.columns.name = None
 
     # ========================================================
-    # ENSURE ALL POLLUTANT COLUMNS EXIST
+    # ENSURE ALL COLUMNS EXIST
     # ========================================================
 
     for pollutant in POLLUTANTS:
 
         if pollutant not in hourly.columns:
-
             hourly[pollutant] = None
 
     hourly = hourly[
@@ -917,7 +878,6 @@ def get_latest_database_timestamp():
         print(
             "Could not read latest database timestamp:"
         )
-
         print(e)
 
         return None
@@ -926,9 +886,7 @@ def get_latest_database_timestamp():
         return None
 
     value = (
-        df.iloc[0][
-            "timestamp"
-        ]
+        df.iloc[0]["timestamp"]
     )
 
     if pd.isna(value):
@@ -1003,17 +961,13 @@ def save_hourly_data(df):
 
         for _, row in df.iterrows():
 
-            timestamp = (
-                row["timestamp"]
-            )
+            timestamp = row["timestamp"]
 
             if pd.isna(timestamp):
                 continue
 
             timestamp_string = (
-                pd.Timestamp(
-                    timestamp
-                )
+                pd.Timestamp(timestamp)
                 .strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
@@ -1057,7 +1011,7 @@ def save_hourly_data(df):
 
             cursor.execute(
                 query,
-                values
+                values,
             )
 
             affected += 1
@@ -1067,7 +1021,6 @@ def save_hourly_data(df):
     except Exception:
 
         conn.rollback()
-
         raise
 
     finally:
@@ -1096,46 +1049,28 @@ def collect_new_data():
 
     print(
         "Latest database timestamp:",
-        previous_latest_timestamp
+        previous_latest_timestamp,
     )
 
-    records = (
-        fetch_cpcb_data()
+    # ========================================================
+    # FETCH API
+    #
+    # CPCBAPIUnavailable is deliberately NOT converted to
+    # False here.
+    # ========================================================
+
+    records = fetch_cpcb_data()
+
+    hourly = convert_records_to_hourly(
+        records
     )
 
-    if records is None:
+    if hourly is None or hourly.empty:
 
-        print()
-        print(
-            "No data received from CPCB."
+        raise CPCBAPIUnavailable(
+            "CPCB returned records, but they could "
+            "not be converted into valid hourly data."
         )
-
-        return False
-
-    hourly = (
-        convert_records_to_hourly(
-            records
-        )
-    )
-
-    if hourly is None:
-
-        print()
-        print(
-            "CPCB data could not "
-            "be converted."
-        )
-
-        return False
-
-    if hourly.empty:
-
-        print()
-        print(
-            "No hourly records available."
-        )
-
-        return False
 
     # ========================================================
     # FIND TRUE NEWEST API TIMESTAMP
@@ -1152,13 +1087,9 @@ def collect_new_data():
 
     if latest_rows.empty:
 
-        print()
-        print(
-            "ERROR: Latest CPCB row "
-            "could not be selected."
+        raise CPCBAPIUnavailable(
+            "Latest CPCB row could not be selected."
         )
-
-        return False
 
     latest = (
         latest_rows.iloc[-1]
@@ -1173,30 +1104,28 @@ def collect_new_data():
 
     print(
         "Timestamp:",
-        latest_api_timestamp
+        latest_api_timestamp,
     )
 
     for pollutant in POLLUTANTS:
 
         print(
             f"{pollutant.upper():5s}:",
-            latest[pollutant]
+            latest[pollutant],
         )
 
     # ========================================================
-    # SAVE ALL RETURNED HOURLY DATA
+    # SAVE ALL RETURNED DATA
     # ========================================================
 
-    affected = (
-        save_hourly_data(
-            hourly
-        )
+    affected = save_hourly_data(
+        hourly
     )
 
     print()
     print(
         "Hourly records processed:",
-        affected
+        affected,
     )
 
     # ========================================================
@@ -1209,7 +1138,7 @@ def collect_new_data():
 
     print(
         "Database latest after save:",
-        database_latest_after_save
+        database_latest_after_save,
     )
 
     # ========================================================
@@ -1220,16 +1149,13 @@ def collect_new_data():
 
         print()
         print(
-            "Database previously had "
-            "no CPCB timestamp."
+            "Database previously had no CPCB timestamp."
         )
 
-        return True
+        return CollectionStatus.NEW_DATA
 
-    previous_latest_timestamp = (
-        pd.Timestamp(
-            previous_latest_timestamp
-        )
+    previous_latest_timestamp = pd.Timestamp(
+        previous_latest_timestamp
     )
 
     # ========================================================
@@ -1249,10 +1175,10 @@ def collect_new_data():
         print(
             previous_latest_timestamp,
             "->",
-            latest_api_timestamp
+            latest_api_timestamp,
         )
 
-        return True
+        return CollectionStatus.NEW_DATA
 
     # ========================================================
     # SAME / OLDER CPCB HOUR
@@ -1260,21 +1186,20 @@ def collect_new_data():
 
     print()
     print(
-        "Latest CPCB timestamp "
-        "is unchanged."
+        "Latest CPCB timestamp is unchanged."
     )
 
     print(
         "Database timestamp:",
-        previous_latest_timestamp
+        previous_latest_timestamp,
     )
 
     print(
         "API timestamp:",
-        latest_api_timestamp
+        latest_api_timestamp,
     )
 
-    return False
+    return CollectionStatus.NO_NEW_DATA
 
 
 # ============================================================
@@ -1320,8 +1245,7 @@ def regenerate_prediction():
 
             print()
             print(
-                "Prediction regenerated "
-                "successfully."
+                "Prediction regenerated successfully."
             )
 
             return True
@@ -1333,7 +1257,7 @@ def regenerate_prediction():
 
         print(
             "Exit code:",
-            result.returncode
+            result.returncode,
         )
 
         return False
@@ -1363,11 +1287,33 @@ def run_collection_cycle():
     )
     print("=" * 70)
 
-    new_data = (
-        collect_new_data()
-    )
+    try:
 
-    if new_data:
+        status = collect_new_data()
+
+    except CPCBAPIUnavailable as e:
+
+        print()
+        print("=" * 70)
+        print(
+            "CPCB API TEMPORARILY UNAVAILABLE"
+        )
+        print("=" * 70)
+
+        print(e)
+
+        print()
+        print(
+            "Database was not treated as up-to-date."
+        )
+
+        print(
+            "Existing prediction retained."
+        )
+
+        return CollectionStatus.API_UNAVAILABLE
+
+    if status == CollectionStatus.NEW_DATA:
 
         print()
         print(
@@ -1389,20 +1335,21 @@ def run_collection_cycle():
 
             print()
             print(
-                "Prediction could not "
-                "be regenerated."
+                "Prediction could not be regenerated."
             )
 
-    else:
+        return CollectionStatus.NEW_DATA
 
-        print()
-        print(
-            "No new CPCB hour available."
-        )
+    print()
+    print(
+        "No new CPCB hour available."
+    )
 
-        print(
-            "Existing prediction retained."
-        )
+    print(
+        "Existing prediction retained."
+    )
+
+    return CollectionStatus.NO_NEW_DATA
 
 
 # ============================================================
@@ -1429,12 +1376,12 @@ def main():
 
         print(
             "Database:",
-            DATABASE_PATH
+            DATABASE_PATH,
         )
 
     print(
         "Predictor:",
-        PREDICTOR_PATH
+        PREDICTOR_PATH,
     )
 
     # ========================================================
@@ -1470,7 +1417,7 @@ def main():
         print(
             "Check interval:",
             CHECK_INTERVAL,
-            "seconds"
+            "seconds",
         )
 
     # ========================================================
@@ -1482,15 +1429,20 @@ def main():
     # ========================================================
     # CLOUD COLLECTION-ONLY MODE
     #
-    # Used by GitHub Actions BEFORE restoring RF models.
+    # Used by GitHub Actions before RF model restoration.
     #
-    # Exit codes:
+    # EXIT CODES:
     #
-    #   0  = No new CPCB timestamp
-    #   10 = New CPCB timestamp found and saved
-    #   1  = Collector error
+    #   0  = API succeeded, but no newer CPCB timestamp
     #
-    # IMPORTANT:
+    #   10 = API succeeded, new CPCB timestamp found
+    #        and saved
+    #
+    #   20 = CPCB API unavailable / timeout / empty
+    #        response after all retries
+    #
+    #   1  = unexpected collector/database error
+    #
     # predictor.py is NOT executed in this mode.
     # ========================================================
 
@@ -1498,14 +1450,12 @@ def main():
 
         try:
 
-            new_data = (
-                collect_new_data()
-            )
+            status = collect_new_data()
 
             print()
             print("=" * 70)
 
-            if new_data:
+            if status == CollectionStatus.NEW_DATA:
 
                 print(
                     "NEW CPCB DATA AVAILABLE"
@@ -1523,6 +1473,31 @@ def main():
 
             sys.exit(0)
 
+        except CPCBAPIUnavailable as e:
+
+            print()
+            print("=" * 70)
+            print(
+                "CPCB API UNAVAILABLE"
+            )
+            print("=" * 70)
+
+            print(e)
+
+            print()
+            print(
+                "This run does NOT mean that "
+                "there is no new CPCB data."
+            )
+
+            print(
+                "The API could not be checked successfully."
+            )
+
+            print("=" * 70)
+
+            sys.exit(20)
+
         except Exception as e:
 
             print()
@@ -1539,22 +1514,47 @@ def main():
     # ========================================================
     # NORMAL ONE-TIME CLOUD MODE
     #
-    # This preserves the original --once behavior:
-    #
-    # collect CPCB -> detect new hour -> run predictor
+    # collect CPCB
+    # -> detect new hour
+    # -> run predictor when new data exists
     # ========================================================
 
     if run_once:
 
         try:
 
-            run_collection_cycle()
+            status = run_collection_cycle()
 
             print()
             print("=" * 70)
-            print(
-                "ONE-TIME CPCB UPDATE FINISHED"
-            )
+
+            if (
+                status
+                == CollectionStatus.API_UNAVAILABLE
+            ):
+
+                print(
+                    "ONE-TIME CPCB UPDATE FINISHED "
+                    "WITH API UNAVAILABLE"
+                )
+
+            elif (
+                status
+                == CollectionStatus.NEW_DATA
+            ):
+
+                print(
+                    "ONE-TIME CPCB UPDATE FINISHED "
+                    "WITH NEW DATA"
+                )
+
+            else:
+
+                print(
+                    "ONE-TIME CPCB UPDATE FINISHED "
+                    "WITH NO NEW DATA"
+                )
+
             print("=" * 70)
 
         except Exception as e:
